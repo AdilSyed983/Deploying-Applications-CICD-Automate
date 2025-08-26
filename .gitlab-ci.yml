@@ -3,71 +3,29 @@ stages:
   - test
   - deploy
 
-# ---------------- BUILD STAGE ----------------
+# Build job: runs only if .sql files change
 build_job:
   stage: build
   script:
-    - echo "🔨 Starting build stage..." | tee build_log.txt
-    - echo "Validating SQL files syntax" | tee -a build_log.txt
-    - ls -l | tee -a build_log.txt
-    - |
-      for file in *.sql; do
-        echo "Checking $file syntax (simulation only)" | tee -a build_log.txt
-      done
-  artifacts:
-    paths:
-      - build_log.txt
-    expire_in: 1 week
-  only:
-    refs:
-      - main
-    changes:
-      - "*.sql"
-      - "README.md"
+    - echo "Building project..."
+  rules:
+    - changes:
+        - "*.sql"
+    - when: never
 
-# ---------------- TEST STAGE ----------------
+# Test job: runs only if .sql files change
 test_job:
   stage: test
   script:
-    - echo "🧪 Starting test stage..." | tee test_log.txt
-    - echo "Simulating execution of Departments.sql and Employees.sql" | tee -a test_log.txt
-    - |
-      for file in Departments.sql Employees.sql; do
-        echo "Testing $file on TEST environment (simulation only)" | tee -a test_log.txt
-      done
-    - echo "Validating APEX app export (f101.sql)..." | tee -a test_log.txt
-  artifacts:
-    paths:
-      - test_log.txt
-    expire_in: 1 week
-  needs:
-    - build_job
-  only:
-    refs:
-      - main
-    changes:
-      - "*.sql"
+    - echo "Running tests..."
+  rules:
+    - changes:
+        - "*.sql"
+    - when: never
 
-# ---------------- DEPLOY STAGE ----------------
+# Deploy job: manual trigger only
 deploy_job:
   stage: deploy
   script:
-    - echo "🚀 Starting deploy stage..." | tee deploy_log.txt
-    - echo "Deploying SQL files to production (simulation only)" | tee -a deploy_log.txt
-    - |
-      for file in Departments.sql Employees.sql f101.sql; do
-        echo "Deploying $file to PROD environment (simulation only)" | tee -a deploy_log.txt
-      done
-  artifacts:
-    paths:
-      - deploy_log.txt
-    expire_in: 1 week
-  needs:
-    - test_job
-  only:
-    refs:
-      - main
-    changes:
-      - "*.sql"
-  when: manual     # 🔹 manual trigger for safety
-  allow_failure: false
+    - echo "Deploying project..."
+  when: manual
