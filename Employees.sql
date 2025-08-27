@@ -44,7 +44,7 @@ INSERT INTO EMPLOYEE (EMP_ID, EMP_NAME, JOB_TITLE, SALARY, DEPT_ID)
 VALUES (1011, 'Levi Adams', 'Distribution', 60000, 110);
 
 INSERT INTO EMPLOYEE (EMP_ID, EMP_NAME, JOB_TITLE, SALARY, DEPT_ID) 
-VALUES (1012, 'Harold lanner', 'Supply Chain Analyst', 60000, 120);
+VALUES (1012, 'Harold lanner', 'Supply Chain Analyst', 65000, 120);
 
 
 -- Commit changes
