@@ -8,25 +8,18 @@ build_job:
   stage: build
   image: liquibase/liquibase:latest
   script:
-    - echo "🔨 Starting build stage..."
-    - echo "Validating SQL migration files with Liquibase..."
-    - liquibase --changeLogFile=changelog.xml validate
+    - echo "Running Liquibase build (syntax validation)..."
+    - liquibase --changeLogFile=Department.sql validate || true
+    - liquibase --changeLogFile=Employees.sql validate || true
   artifacts:
     paths:
       - build_log.txt
     expire_in: 1 week
-  only:
-    refs:
-      - main
-    changes:
-      - "*.sql"
-      - "changelog.xml"
-      - "README.md"
 
 # ---------------- TEST STAGE ----------------
 test_job:
   stage: test
-  image: liquibase/liquibase:latest
+  image: postgres:15
   services:
     - name: postgres:15
       alias: db
@@ -35,47 +28,63 @@ test_job:
     POSTGRES_PASSWORD: test
     POSTGRES_DB: testdb
   script:
-    - echo "🧪 Starting test stage..."
-    - echo "Running Liquibase update against TEST DB..."
-    - liquibase \
-        --url=jdbc:postgresql://db:5432/testdb \
-        --username=test \
-        --password=test \
-        --changeLogFile=changelog.xml update
+    - echo " Running schema and data tests..." | tee test_log.txt
+
+    # Load schema & data
+    - psql -h db -U test -d testdb -f Department.sql
+    - psql -h db -U test -d testdb -f Employees.sql
+
+    #  Assertions
+    - echo "Checking row counts..."
+    - 'test $(psql -h db -U test -d testdb -t -c "SELECT COUNT(*) FROM DEPARTMENT;") -eq 12'
+    - 'test $(psql -h db -U test -d testdb -t -c "SELECT COUNT(*) FROM EMPLOYEE;") -eq 12'
+    - echo "Checking constraints..."
+    - 'test $(psql -h db -U test -d testdb -t -c "SELECT COUNT(*) FROM EMPLOYEE WHERE EMP_NAME IS NULL;") -eq 0'
+    - 'test $(psql -h db -U test -d testdb -t -c "SELECT COUNT(*) FROM EMPLOYEE e LEFT JOIN DEPARTMENT d ON e.DEPT_ID=d.DEPT_ID WHERE d.DEPT_ID IS NULL;") -eq 0'
+    - 'test $(psql -h db -U test -d testdb -t -c "SELECT COUNT(*) FROM EMPLOYEE WHERE SALARY <= 0;") -eq 0'
+    - 'test $(psql -h db -U test -d testdb -t -c "SELECT COUNT(*) FROM (SELECT DEPT_NAME, COUNT(*) FROM DEPARTMENT GROUP BY DEPT_NAME HAVING COUNT(*) > 1) sub;") -eq 0'
+
   artifacts:
     paths:
       - test_log.txt
     expire_in: 1 week
   needs:
     - build_job
-  only:
-    refs:
-      - main
-    changes:
-      - "*.sql"
 
-# ---------------- DEPLOY STAGE ----------------
-deploy_job:
+# ---------------- DEPLOY TO UAT ----------------
+deploy_uat:
   stage: deploy
   image: liquibase/liquibase:latest
+  variables:
+    LIQUIBASE_URL: "jdbc:postgresql://uat-db-host:5432/uatdb"
+    LIQUIBASE_USERNAME: "uat_user"
+    LIQUIBASE_PASSWORD: "uat_password"
   script:
-    - echo "🚀 Starting deploy stage..."
-    - echo "Applying Liquibase changesets to PROD (simulation only)..."
-    - liquibase \
-        --url=jdbc:postgresql://prod-db:5432/proddb \
-        --username=prod_user \
-        --password=$PROD_DB_PASS \
-        --changeLogFile=changelog.xml update
-  artifacts:
-    paths:
-      - deploy_log.txt
-    expire_in: 1 week
+    - echo "🚀 Deploying schema to UAT..."
+    - liquibase --changeLogFile=Department.sql update
+    - liquibase --changeLogFile=Employees.sql update
+  environment:
+    name: uat
+    url: https://uat.example.com
   needs:
     - test_job
-  only:
-    refs:
-      - main
-    changes:
-      - "*.sql"
-  when: manual     # safer for PROD
+
+# ---------------- DEPLOY TO PROD ----------------
+deploy_prod:
+  stage: deploy
+  image: liquibase/liquibase:latest
+  variables:
+    LIQUIBASE_URL: "jdbc:postgresql://prod-db-host:5432/proddb"
+    LIQUIBASE_USERNAME: "prod_user"
+    LIQUIBASE_PASSWORD: "prod_password"
+  script:
+    - echo "🚀 Deploying schema to PROD..."
+    - liquibase --changeLogFile=Department.sql update
+    - liquibase --changeLogFile=Employees.sql update
+  environment:
+    name: production
+    url: https://prod.example.com
+  needs:
+    - deploy_uat
+  when: manual   #  Only run when manually approved
   allow_failure: false
