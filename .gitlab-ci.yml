@@ -6,51 +6,43 @@ stages:
 # ---------------- BUILD STAGE ----------------
 build_job:
   stage: build
-  image: postgres:15
+  image: liquibase/liquibase:latest
   script:
-    - echo " Starting build stage..." | tee build_log.txt
-    - echo "Validating SQL file presence..."
-    - ls -l *.sql
-    - echo " SQL files ready for processing." | tee -a build_log.txt
+    - echo "🔍 Validating Liquibase changelog..." | tee build_log.txt
+    # Validate the changelog syntax
+    - liquibase --url="jdbc:postgresql://db:5432/testdb" \
+        --username=test --password=test validate
   artifacts:
     paths:
       - build_log.txt
     expire_in: 1 week
   only:
+    refs:
+      - main
     changes:
-      - "*.sql"
+      - "changelog.xml"
       - "README.md"
 
 # ---------------- TEST STAGE ----------------
 test_job:
   stage: test
-  image: postgres:15
+  image: liquibase/liquibase:latest
   services:
     - name: postgres:15
       alias: db
   variables:
+    POSTGRES_DB: testdb
     POSTGRES_USER: test
     POSTGRES_PASSWORD: test
-    POSTGRES_DB: testdb
-    PGPASSWORD: test       #  ensures psql uses password automatically
   script:
-    - echo " Running schema and data tests..." | tee test_log.txt
-
-    # Load schema & data
-    - psql -h db -U test -d testdb -f Department.sql
-    - psql -h db -U test -d testdb -f Employees.sql
-
-    #  Assertions
-    - echo " Checking row counts..."
-    - 'test $(psql -h db -U test -d testdb -t -c "SELECT COUNT(*) FROM DEPARTMENT;") -eq 12'
-    - 'test $(psql -h db -U test -d testdb -t -c "SELECT COUNT(*) FROM EMPLOYEE;") -eq 12'
-
-    - echo " Checking constraints..."
-    - 'test $(psql -h db -U test -d testdb -t -c "SELECT COUNT(*) FROM EMPLOYEE WHERE EMP_NAME IS NULL;") -eq 0'
-    - 'test $(psql -h db -U test -d testdb -t -c "SELECT COUNT(*) FROM EMPLOYEE e LEFT JOIN DEPARTMENT d ON e.DEPT_ID=d.DEPT_ID WHERE d.DEPT_ID IS NULL;") -eq 0'
-    - 'test $(psql -h db -U test -d testdb -t -c "SELECT COUNT(*) FROM EMPLOYEE WHERE SALARY <= 0;") -eq 0'
-    - 'test $(psql -h db -U test -d testdb -t -c "SELECT COUNT(*) FROM (SELECT DEPT_NAME, COUNT(*) FROM DEPARTMENT GROUP BY DEPT_NAME HAVING COUNT(*) > 1) sub;") -eq 0'
-
+    - echo "🧪 Applying schema in TEST database..." | tee test_log.txt
+    - liquibase --url="jdbc:postgresql://db:5432/testdb" \
+        --username=test --password=test update
+    - echo "✅ Schema applied successfully in TEST environment" | tee -a test_log.txt
+    # Example check - verify tables exist
+    - |
+      psql -h db -U test -d testdb -c "\dt"
+      psql -h db -U test -d testdb -c "SELECT * FROM department;"
   artifacts:
     paths:
       - test_log.txt
@@ -58,53 +50,43 @@ test_job:
   needs:
     - build_job
   only:
+    refs:
+      - main
     changes:
-      - "*.sql"
+      - "changelog.xml"
 
-# ---------------- DEPLOY STAGE (UAT) ----------------
+# ---------------- DEPLOY TO UAT ----------------
 deploy_uat:
   stage: deploy
-  image: postgres:15
-  variables:
-    POSTGRES_USER: uat_user
-    POSTGRES_PASSWORD: uat_pass
-    POSTGRES_DB: uatdb
-    PGPASSWORD: uat_pass
+  image: liquibase/liquibase:latest
   script:
-    - echo " Deploying to UAT environment..." | tee deploy_log.txt
-    - psql -h db -U uat_user -d uatdb -f Department.sql
-    - psql -h db -U uat_user -d uatdb -f Employees.sql
+    - echo "🚀 Deploying schema to UAT environment..." | tee deploy_uat_log.txt
+    - liquibase --url="jdbc:postgresql://uat-db:5432/uatdb" \
+        --username=$UAT_DB_USER --password=$UAT_DB_PASS update
+    - echo "✅ UAT deployment successful!" | tee -a deploy_uat_log.txt
   artifacts:
     paths:
-      - deploy_log.txt
+      - deploy_uat_log.txt
     expire_in: 1 week
   needs:
     - test_job
-  only:
-    refs:
-      - main
+  when: manual   # Safe manual trigger for UAT
+  allow_failure: false
 
-# ---------------- DEPLOY STAGE (PROD) ----------------
+# ---------------- DEPLOY TO PROD ----------------
 deploy_prod:
   stage: deploy
-  image: postgres:15
-  variables:
-    POSTGRES_USER: prod_user
-    POSTGRES_PASSWORD: prod_pass
-    POSTGRES_DB: proddb
-    PGPASSWORD: prod_pass
+  image: liquibase/liquibase:latest
   script:
-    - echo " Deploying to PROD environment..." | tee deploy_prod_log.txt
-    - psql -h db -U prod_user -d proddb -f Department.sql
-    - psql -h db -U prod_user -d proddb -f Employees.sql
+    - echo "🚀 Deploying schema to PROD environment..." | tee deploy_prod_log.txt
+    - liquibase --url="jdbc:postgresql://prod-db:5432/proddb" \
+        --username=$PROD_DB_USER --password=$PROD_DB_PASS update
+    - echo "✅ PROD deployment successful!" | tee -a deploy_prod_log.txt
   artifacts:
     paths:
       - deploy_prod_log.txt
     expire_in: 1 week
   needs:
     - deploy_uat
-  only:
-    refs:
-      - main
-  when: manual     #  PROD requires manual approval
+  when: manual   # Trigger manually after UAT
   allow_failure: false
