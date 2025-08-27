@@ -11,16 +11,22 @@ build_job:
     - name: postgres:15
       alias: db
   variables:
-    POSTGRES_DB: testdb
-    POSTGRES_USER: test
-    POSTGRES_PASSWORD: test
+    POSTGRES_USER: postgres
+    POSTGRES_PASSWORD: postgres
+    POSTGRES_DB: postgres
   script:
-    - echo "🔨 Validating Liquibase changelogs..."
-    - liquibase --url="jdbc:postgresql://db:5432/$POSTGRES_DB" --username=$POSTGRES_USER --password=$POSTGRES_PASSWORD --changelog-file=changelog.xml validate
+    - echo "===== BUILD: validate changelog (Liquibase) ====="
+    # Retry loop: wait until DB is reachable (liquibase status will fail until postgres is up)
+    - for i in $(seq 1 20); do liquibase --url="jdbc:postgresql://db:5432/$POSTGRES_DB" --username=$POSTGRES_USER --password=$POSTGRES_PASSWORD --changeLogFile=changelog.xml status && break || (echo "Waiting for DB to be ready ($i)"; sleep 2); done
+    - echo "Running liquibase validate..."
+    - liquibase --url="jdbc:postgresql://db:5432/$POSTGRES_DB" --username=$POSTGRES_USER --password=$POSTGRES_PASSWORD --changeLogFile=changelog.xml validate
   artifacts:
     paths:
       - build_log.txt
     expire_in: 1 week
+  only:
+    refs:
+      - main
 
 # ---------------- TEST STAGE ----------------
 test_job:
@@ -30,38 +36,98 @@ test_job:
     - name: postgres:15
       alias: db
   variables:
-    POSTGRES_DB: testdb
-    POSTGRES_USER: test
-    POSTGRES_PASSWORD: test
+    POSTGRES_USER: postgres
+    POSTGRES_PASSWORD: postgres
+    # we will create testdb/uatdb/proddb dynamically
+  before_script:
+    - apt-get update -y && apt-get install -y postgresql-client  # install psql for verification and DB creation
+    - export PGPASSWORD=$POSTGRES_PASSWORD
   script:
-    - echo "🧪 Running Liquibase update against TEST database..."
-    - liquibase --url="jdbc:postgresql://db:5432/$POSTGRES_DB" --username=$POSTGRES_USER --password=$POSTGRES_PASSWORD --changelog-file=changelog.xml update
-    - echo "✅ Test database updated successfully."
+    - echo "===== TEST: prepare DBs and apply changelog to testdb =====" | tee test_log.txt
+    # create databases if missing
+    - |
+      for DBNAME in testdb uatdb proddb; do
+        exists=$(psql -h db -U $POSTGRES_USER -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$DBNAME';")
+        if [ "$exists" != "1" ]; then
+          echo "Creating database $DBNAME" | tee -a test_log.txt
+          psql -h db -U $POSTGRES_USER -d postgres -c "CREATE DATABASE $DBNAME;" | tee -a test_log.txt
+        else
+          echo "Database $DBNAME already exists" | tee -a test_log.txt
+        fi
+      done
+    # apply changelog to testdb (this executes DDL + inserts from changelog.xml)
+    - echo "Applying changelog to testdb..." | tee -a test_log.txt
+    - liquibase --url="jdbc:postgresql://db:5432/testdb" --username=$POSTGRES_USER --password=$POSTGRES_PASSWORD --changeLogFile=changelog.xml update | tee -a test_log.txt
+    # verification queries (fail on mismatch)
+    - echo "Verifying row counts and constraints..." | tee -a test_log.txt
+    - deptCount=$(psql -h db -U $POSTGRES_USER -d testdb -t -c "SELECT COUNT(*) FROM department;" | xargs); echo "department count: $deptCount" | tee -a test_log.txt
+    - if [ "$deptCount" -ne 12 ]; then echo "ERROR: expected 12 departments but got $deptCount" | tee -a test_log.txt; exit 1; fi
+    - empCount=$(psql -h db -U $POSTGRES_USER -d testdb -t -c "SELECT COUNT(*) FROM employee;" | xargs); echo "employee count: $empCount" | tee -a test_log.txt
+    - if [ "$empCount" -ne 12 ]; then echo "ERROR: expected 12 employees but got $empCount" | tee -a test_log.txt; exit 1; fi
+    - orphanCount=$(psql -h db -U $POSTGRES_USER -d testdb -t -c "SELECT COUNT(*) FROM employee e LEFT JOIN department d ON e.dept_id=d.dept_id WHERE d.dept_id IS NULL;" | xargs); echo "orphan employees count: $orphanCount" | tee -a test_log.txt
+    - if [ "$orphanCount" -ne 0 ]; then echo "ERROR: $orphanCount employees have invalid dept_id" | tee -a test_log.txt; exit 1; fi
+    - salaryBad=$(psql -h db -U $POSTGRES_USER -d testdb -t -c "SELECT COUNT(*) FROM employee WHERE salary <= 0 OR salary IS NULL;" | xargs); echo "invalid salary rows: $salaryBad" | tee -a test_log.txt
+    - if [ "$salaryBad" -ne 0 ]; then echo "ERROR: $salaryBad rows with non-positive or null salary" | tee -a test_log.txt; exit 1; fi
+    - echo "All tests passed." | tee -a test_log.txt
   artifacts:
     paths:
       - test_log.txt
     expire_in: 1 week
+  only:
+    refs:
+      - main
 
-# ---------------- DEPLOY UAT ----------------
+# ---------------- DEPLOY TO UAT (simulated in same runner/service) ----------------
 deploy_uat:
   stage: deploy
   image: liquibase/liquibase:latest
+  services:
+    - name: postgres:15
+      alias: db
+  variables:
+    POSTGRES_USER: postgres
+    POSTGRES_PASSWORD: postgres
+  before_script:
+    - apt-get update -y && apt-get install -y postgresql-client
+    - export PGPASSWORD=$POSTGRES_PASSWORD
   script:
-    - echo "🚀 Deploying to UAT..."
-    - liquibase --url="jdbc:postgresql://uat-host:5432/uatdb" --username=uat_user --password=$UAT_PASSWORD --changelog-file=changelog.xml update
-    - echo "✅ UAT deployment complete."
+    - echo "===== DEPLOY UAT (simulated) ====="
+    # ensure DB exists
+    - exists=$(psql -h db -U $POSTGRES_USER -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='uatdb';")
+    - if [ "$exists" != "1" ]; then psql -h db -U $POSTGRES_USER -d postgres -c "CREATE DATABASE uatdb;"; fi
+    - echo "Applying changelog to uatdb (simulated UAT)..." 
+    - liquibase --url="jdbc:postgresql://db:5432/uatdb" --username=$POSTGRES_USER --password=$POSTGRES_PASSWORD --changeLogFile=changelog.xml update
+    - echo "UAT deploy complete."
   when: manual
   environment:
     name: uat
+  only:
+    refs:
+      - main
 
-# ---------------- DEPLOY PROD ----------------
+# ---------------- DEPLOY TO PROD (simulated) ----------------
 deploy_prod:
   stage: deploy
   image: liquibase/liquibase:latest
+  services:
+    - name: postgres:15
+      alias: db
+  variables:
+    POSTGRES_USER: postgres
+    POSTGRES_PASSWORD: postgres
+  before_script:
+    - apt-get update -y && apt-get install -y postgresql-client
+    - export PGPASSWORD=$POSTGRES_PASSWORD
   script:
-    - echo "🚀 Deploying to PROD..."
-    - liquibase --url="jdbc:postgresql://prod-host:5432/proddb" --username=prod_user --password=$PROD_PASSWORD --changelog-file=changelog.xml update
-    - echo "✅ PROD deployment complete."
+    - echo "===== DEPLOY PROD (simulated) ====="
+    - exists=$(psql -h db -U $POSTGRES_USER -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='proddb';")
+    - if [ "$exists" != "1" ]; then psql -h db -U $POSTGRES_USER -d postgres -c "CREATE DATABASE proddb;"; fi
+    - echo "Applying changelog to proddb (simulated PROD)..."
+    - liquibase --url="jdbc:postgresql://db:5432/proddb" --username=$POSTGRES_USER --password=$POSTGRES_PASSWORD --changeLogFile=changelog.xml update
+    - echo "PROD deploy complete."
   when: manual
   environment:
     name: production
+  only:
+    refs:
+      - main
