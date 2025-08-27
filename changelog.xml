@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="
+       http://www.liquibase.org/xml/ns/dbchangelog
+       http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.8.xsd">
+
+  <!-- 1 - create department table -->
+  <changeSet id="1-create-department" author="auto">
+    <createTable tableName="department">
+      <column name="dept_id" type="INT">
+        <constraints primaryKey="true" nullable="false"/>
+      </column>
+      <column name="dept_name" type="VARCHAR(50)">
+        <constraints nullable="false"/>
+      </column>
+      <column name="location" type="VARCHAR(50)"/>
+    </createTable>
+  </changeSet>
+
+  <!-- 2 - insert departments (12 rows) -->
+  <changeSet id="2-insert-departments" author="auto">
+    <insert tableName="department">
+      <column name="dept_id" valueNumeric="10"/>
+      <column name="dept_name" value="Human Resources"/>
+      <column name="location" value="New York"/>
+    </insert>
+    <insert tableName="department">
+      <column name="dept_id" valueNumeric="20"/>
+      <column name="dept_name" value="Finance"/>
+      <column name="location" value="Chicago"/>
+    </insert>
+    <insert tableName="department">
+      <column name="dept_id" valueNumeric="30"/>
+      <column name="dept_name" value="IT"/>
+      <column name="location" value="San Francisco"/>
+    </insert>
+    <insert tableName="department">
+      <column name="dept_id" valueNumeric="40"/>
+      <column name="dept_name" value="Marketing"/>
+      <column name="location" value="Los Angeles"/>
+    </insert>
+    <insert tableName="department">
+      <column name="dept_id" valueNumeric="50"/>
+      <column name="dept_name" value="Sales"/>
+      <column name="location" value="Boston"/>
+    </insert>
+    <insert tableName="department">
+      <column name="dept_id" valueNumeric="60"/>
+      <column name="dept_name" value="Customer Support"/>
+      <column name="location" value="Dallas"/>
+    </insert>
+    <insert tableName="department">
+      <column name="dept_id" valueNumeric="70"/>
+      <column name="dept_name" value="Research &amp; Development"/>
+      <column name="location" value="Seattle"/>
+    </insert>
+    <insert tableName="department">
+      <column name="dept_id" valueNumeric="80"/>
+      <column name="dept_name" value="Legal"/>
+      <column name="location" value="Washington DC"/>
+    </insert>
+    <insert tableName="department">
+      <column name="dept_id" valueNumeric="90"/>
+      <column name="dept_name" value="Administration"/>
+      <column name="location" value="Houston"/>
+    </insert>
+    <insert tableName="department">
+      <column name="dept_id" valueNumeric="100"/>
+      <column name="dept_name" value="Procurement"/>
+      <column name="location" value="Denver"/>
+    </insert>
+    <insert tableName="department">
+      <column name="dept_id" valueNumeric="110"/>
+      <column name="dept_name" value="Finance"/>
+      <column name="location" value="Howard"/>
+    </insert>
+    <insert tableName="department">
+      <column name="dept_id" valueNumeric="120"/>
+      <column name="dept_name" value="Supply Chain"/>
+      <column name="location" value="Levi"/>
+    </insert>
+  </changeSet>
+
+  <!-- 3 - create employee table -->
+  <changeSet id="3-create-employee" author="auto">
+    <createTable tableName="employee">
+      <column name="emp_id" type="INT">
+        <constraints primaryKey="true" nullable="false"/>
+      </column>
+      <column name="emp_name" type="VARCHAR(100)">
+        <constraints nullable="false"/>
+      </column>
+      <column name="job_title" type="VARCHAR(50)"/>
+      <column name="salary" type="NUMERIC(10,2)"/>
+      <column name="dept_id" type="INT"/>
+    </createTable>
+  </changeSet>
+
+  <!-- 4 - FK constraint -->
+  <changeSet id="4-add-fk" author="auto">
+    <addForeignKeyConstraint baseTableName="employee"
+                             baseColumnNames="dept_id"
+                             referencedTableName="department"
+                             referencedColumnNames="dept_id"
+                             constraintName="fk_emp_dept"/>
+  </changeSet>
+
+  <!-- 5 - insert employees (12 rows) -->
+  <changeSet id="5-insert-employees" author="auto">
+    <insert tableName="employee">
+      <column name="emp_id" valueNumeric="1001"/><column name="emp_name" value="Alice Johnson"/><column name="job_title" value="HR Manager"/><column name="salary" valueNumeric="75000"/><column name="dept_id" valueNumeric="10"/>
+    </insert>
+    <insert tableName="employee">
+      <column name="emp_id" valueNumeric="1002"/><column name="emp_name" value="Bob Smith"/><column name="job_title" value="Financial Analyst"/><column name="salary" valueNumeric="68000"/><column name="dept_id" valueNumeric="20"/>
+    </insert>
+    <insert tableName="employee">
+      <column name="emp_id" valueNumeric="1003"/><column name="emp_name" value="Charlie Brown"/><column name="job_title" value="Software Engineer"/><column name="salary" valueNumeric="85000"/><column name="dept_id" valueNumeric="30"/>
+    </insert>
+    <insert tableName="employee">
+      <column name="emp_id" valueNumeric="1004"/><column name="emp_name" value="Diana Miller"/><column name="job_title" value="Marketing Executive"/><column name="salary" valueNumeric="60000"/><column name="dept_id" valueNumeric="40"/>
+    </insert>
+    <insert tableName="employee">
+      <column name="emp_id" valueNumeric="1005"/><column name="emp_name" value="Edward Davis"/><column name="job_title" value="Sales Manager"/><column name="salary" valueNumeric="72000"/><column name="dept_id" valueNumeric="50"/>
+    </insert>
+    <insert tableName="employee">
+      <column name="emp_id" valueNumeric="1006"/><column name="emp_name" value="Fiona Wilson"/><column name="job_title" value="Support Specialist"/><column name="salary" valueNumeric="50000"/><column name="dept_id" valueNumeric="60"/>
+    </insert>
+    <insert tableName="employee">
+      <column name="emp_id" valueNumeric="1007"/><column name="emp_name" value="George Thomas"/><column name="job_title" value="Research Scientist"/><column name="salary" valueNumeric="95000"/><column name="dept_id" valueNumeric="70"/>
+    </insert>
+    <insert tableName="employee">
+      <column name="emp_id" valueNumeric="1008"/><column name="emp_name" value="Hannah White"/><column name="job_title" value="Legal Advisor"/><column name="salary" valueNumeric="88000"/><column name="dept_id" valueNumeric="80"/>
+    </insert>
+    <insert tableName="employee">
+      <column name="emp_id" valueNumeric="1009"/><column name="emp_name" value="Ian Clark"/><column name="job_title" value="Admin Officer"/><column name="salary" valueNumeric="52000"/><column name="dept_id" valueNumeric="90"/>
+    </insert>
+    <insert tableName="employee">
+      <column name="emp_id" valueNumeric="1010"/><column name="emp_name" value="Julia Lewis"/><column name="job_title" value="Procurement Lead"/><column name="salary" valueNumeric="64000"/><column name="dept_id" valueNumeric="100"/>
+    </insert>
+    <insert tableName="employee">
+      <column name="emp_id" valueNumeric="1011"/><column name="emp_name" value="Levi Adams"/><column name="job_title" value="Distribution"/><column name="salary" valueNumeric="60000"/><column name="dept_id" valueNumeric="110"/>
+    </insert>
+    <insert tableName="employee">
+      <column name="emp_id" valueNumeric="1012"/><column name="emp_name" value="Harold lenn"/><column name="job_title" value="Supply Chain Analyst"/><column name="salary" valueNumeric="60000"/><column name="dept_id" valueNumeric="120"/>
+    </insert>
+  </changeSet>
+
+</databaseChangeLog>
