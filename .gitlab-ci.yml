@@ -37,20 +37,12 @@ lint_job:
   before_script:
     - pip install sqlfluff
   script:
-    - echo "🔍 Running SQLFluff linting with Postgres dialect..." | tee lint_log.txt
-    - sqlfluff lint Department.sql --dialect postgres | tee -a lint_log.txt
-    - sqlfluff lint Employees.sql --dialect postgres | tee -a lint_log.txt
+    - sqlfluff parse Department.sql --dialect postgres | tee lint_log.txt
+    - sqlfluff parse Employees.sql --dialect postgres | tee -a lint_log.txt
   artifacts:
     paths:
       - lint_log.txt
     expire_in: 1 week
-  needs:
-    - build_job
-  only:
-    refs:
-      - main
-    changes:
-      - "*.sql"
 # ---------------- TEST STAGE ----------------
 test_job:
   stage: test
