@@ -7,9 +7,18 @@ stages:
 build_job:
   stage: build
   image: liquibase/liquibase:latest
+  services:
+    - name: postgres:15
+      alias: db
+  variables:
+    POSTGRES_DB: testdb
+    POSTGRES_USER: test
+    POSTGRES_PASSWORD: test
   script:
     - echo "🔨 Validating Liquibase changelogs..."
-    - liquibase --changelog-file=changelog.xml validate
+    - liquibase --url="jdbc:postgresql://db:5432/$POSTGRES_DB" \
+                --username=$POSTGRES_USER --password=$POSTGRES_PASSWORD \
+                --changelog-file=changelog.xml validate
   artifacts:
     paths:
       - build_log.txt
@@ -28,8 +37,7 @@ test_job:
     POSTGRES_PASSWORD: test
   script:
     - echo "🧪 Spinning up Postgres for TEST..."
-    - echo "🧪 Applying Liquibase changelog to test DB..."
-    - liquibase --url="jdbc:postgresql://db:5432/testdb" \
+    - liquibase --url="jdbc:postgresql://db:5432/$POSTGRES_DB" \
                 --username=$POSTGRES_USER --password=$POSTGRES_PASSWORD \
                 --changelog-file=changelog.xml update
     - echo "✅ Running schema verification..."
@@ -49,7 +57,7 @@ deploy_uat:
     - liquibase --url="jdbc:postgresql://uat-db:5432/uatdb" \
                 --username=$UAT_DB_USER --password=$UAT_DB_PASS \
                 --changelog-file=changelog.xml update
-  when: manual   # 👈 manual trigger for safety
+  when: manual
   environment:
     name: uat
   allow_failure: false
@@ -63,7 +71,7 @@ deploy_prod:
     - liquibase --url="jdbc:postgresql://prod-db:5432/proddb" \
                 --username=$PROD_DB_USER --password=$PROD_DB_PASS \
                 --changelog-file=changelog.xml update
-  when: manual   # 👈 manual trigger
+  when: manual
   environment:
     name: production
   allow_failure: false
