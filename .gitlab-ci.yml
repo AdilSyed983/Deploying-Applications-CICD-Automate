@@ -6,15 +6,20 @@ stages:
 # ---------------- BUILD STAGE ----------------
 build_job:
   stage: build
-  image: liquibase/liquibase:latest
+  image: postgres:15
   script:
-    - echo "Running Liquibase build (syntax validation)..."
-    - liquibase --changeLogFile=Department.sql validate || true
-    - liquibase --changeLogFile=Employees.sql validate || true
+    - echo "🔨 Starting build stage..." | tee build_log.txt
+    - echo "Validating SQL file presence..."
+    - ls -l *.sql
+    - echo "✅ SQL files ready for processing." | tee -a build_log.txt
   artifacts:
     paths:
       - build_log.txt
     expire_in: 1 week
+  only:
+    changes:
+      - "*.sql"
+      - "README.md"
 
 # ---------------- TEST STAGE ----------------
 test_job:
@@ -27,18 +32,20 @@ test_job:
     POSTGRES_USER: test
     POSTGRES_PASSWORD: test
     POSTGRES_DB: testdb
+    PGPASSWORD: test       # 👈 ensures psql uses password automatically
   script:
-    - echo " Running schema and data tests..." | tee test_log.txt
+    - echo "🧪 Running schema and data tests..." | tee test_log.txt
 
     # Load schema & data
     - psql -h db -U test -d testdb -f Department.sql
     - psql -h db -U test -d testdb -f Employees.sql
 
-    #  Assertions
-    - echo "Checking row counts..."
+    # ✅ Assertions
+    - echo "🔍 Checking row counts..."
     - 'test $(psql -h db -U test -d testdb -t -c "SELECT COUNT(*) FROM DEPARTMENT;") -eq 12'
     - 'test $(psql -h db -U test -d testdb -t -c "SELECT COUNT(*) FROM EMPLOYEE;") -eq 12'
-    - echo "Checking constraints..."
+
+    - echo "🔍 Checking constraints..."
     - 'test $(psql -h db -U test -d testdb -t -c "SELECT COUNT(*) FROM EMPLOYEE WHERE EMP_NAME IS NULL;") -eq 0'
     - 'test $(psql -h db -U test -d testdb -t -c "SELECT COUNT(*) FROM EMPLOYEE e LEFT JOIN DEPARTMENT d ON e.DEPT_ID=d.DEPT_ID WHERE d.DEPT_ID IS NULL;") -eq 0'
     - 'test $(psql -h db -U test -d testdb -t -c "SELECT COUNT(*) FROM EMPLOYEE WHERE SALARY <= 0;") -eq 0'
@@ -50,41 +57,54 @@ test_job:
     expire_in: 1 week
   needs:
     - build_job
+  only:
+    changes:
+      - "*.sql"
 
-# ---------------- DEPLOY TO UAT ----------------
+# ---------------- DEPLOY STAGE (UAT) ----------------
 deploy_uat:
   stage: deploy
-  image: liquibase/liquibase:latest
+  image: postgres:15
   variables:
-    LIQUIBASE_URL: "jdbc:postgresql://uat-db-host:5432/uatdb"
-    LIQUIBASE_USERNAME: "uat_user"
-    LIQUIBASE_PASSWORD: "uat_password"
+    POSTGRES_USER: uat_user
+    POSTGRES_PASSWORD: uat_pass
+    POSTGRES_DB: uatdb
+    PGPASSWORD: uat_pass
   script:
-    - echo "🚀 Deploying schema to UAT..."
-    - liquibase --changeLogFile=Department.sql update
-    - liquibase --changeLogFile=Employees.sql update
-  environment:
-    name: uat
-    url: https://uat.example.com
+    - echo "🚀 Deploying to UAT environment..." | tee deploy_log.txt
+    - psql -h db -U uat_user -d uatdb -f Department.sql
+    - psql -h db -U uat_user -d uatdb -f Employees.sql
+  artifacts:
+    paths:
+      - deploy_log.txt
+    expire_in: 1 week
   needs:
     - test_job
+  only:
+    refs:
+      - main
 
-# ---------------- DEPLOY TO PROD ----------------
+# ---------------- DEPLOY STAGE (PROD) ----------------
 deploy_prod:
   stage: deploy
-  image: liquibase/liquibase:latest
+  image: postgres:15
   variables:
-    LIQUIBASE_URL: "jdbc:postgresql://prod-db-host:5432/proddb"
-    LIQUIBASE_USERNAME: "prod_user"
-    LIQUIBASE_PASSWORD: "prod_password"
+    POSTGRES_USER: prod_user
+    POSTGRES_PASSWORD: prod_pass
+    POSTGRES_DB: proddb
+    PGPASSWORD: prod_pass
   script:
-    - echo "🚀 Deploying schema to PROD..."
-    - liquibase --changeLogFile=Department.sql update
-    - liquibase --changeLogFile=Employees.sql update
-  environment:
-    name: production
-    url: https://prod.example.com
+    - echo "🚀 Deploying to PROD environment..." | tee deploy_prod_log.txt
+    - psql -h db -U prod_user -d proddb -f Department.sql
+    - psql -h db -U prod_user -d proddb -f Employees.sql
+  artifacts:
+    paths:
+      - deploy_prod_log.txt
+    expire_in: 1 week
   needs:
     - deploy_uat
-  when: manual   #  Only run when manually approved
+  only:
+    refs:
+      - main
+  when: manual     # 👈 PROD requires manual approval
   allow_failure: false
