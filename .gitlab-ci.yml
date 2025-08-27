@@ -8,10 +8,10 @@ build_job:
   stage: build
   image: postgres:15
   script:
-    - echo "🔨 Starting build stage..." | tee build_log.txt
+    - echo " Starting build stage..." | tee build_log.txt
     - echo "Validating SQL file presence..."
     - ls -l *.sql
-    - echo "✅ SQL files ready for processing." | tee -a build_log.txt
+    - echo " SQL files ready for processing." | tee -a build_log.txt
   artifacts:
     paths:
       - build_log.txt
@@ -32,20 +32,20 @@ test_job:
     POSTGRES_USER: test
     POSTGRES_PASSWORD: test
     POSTGRES_DB: testdb
-    PGPASSWORD: test       # 👈 ensures psql uses password automatically
+    PGPASSWORD: test       #  ensures psql uses password automatically
   script:
-    - echo "🧪 Running schema and data tests..." | tee test_log.txt
+    - echo " Running schema and data tests..." | tee test_log.txt
 
     # Load schema & data
     - psql -h db -U test -d testdb -f Department.sql
     - psql -h db -U test -d testdb -f Employees.sql
 
-    # ✅ Assertions
-    - echo "🔍 Checking row counts..."
+    #  Assertions
+    - echo " Checking row counts..."
     - 'test $(psql -h db -U test -d testdb -t -c "SELECT COUNT(*) FROM DEPARTMENT;") -eq 12'
     - 'test $(psql -h db -U test -d testdb -t -c "SELECT COUNT(*) FROM EMPLOYEE;") -eq 12'
 
-    - echo "🔍 Checking constraints..."
+    - echo " Checking constraints..."
     - 'test $(psql -h db -U test -d testdb -t -c "SELECT COUNT(*) FROM EMPLOYEE WHERE EMP_NAME IS NULL;") -eq 0'
     - 'test $(psql -h db -U test -d testdb -t -c "SELECT COUNT(*) FROM EMPLOYEE e LEFT JOIN DEPARTMENT d ON e.DEPT_ID=d.DEPT_ID WHERE d.DEPT_ID IS NULL;") -eq 0'
     - 'test $(psql -h db -U test -d testdb -t -c "SELECT COUNT(*) FROM EMPLOYEE WHERE SALARY <= 0;") -eq 0'
@@ -71,7 +71,7 @@ deploy_uat:
     POSTGRES_DB: uatdb
     PGPASSWORD: uat_pass
   script:
-    - echo "🚀 Deploying to UAT environment..." | tee deploy_log.txt
+    - echo " Deploying to UAT environment..." | tee deploy_log.txt
     - psql -h db -U uat_user -d uatdb -f Department.sql
     - psql -h db -U uat_user -d uatdb -f Employees.sql
   artifacts:
@@ -94,7 +94,7 @@ deploy_prod:
     POSTGRES_DB: proddb
     PGPASSWORD: prod_pass
   script:
-    - echo "🚀 Deploying to PROD environment..." | tee deploy_prod_log.txt
+    - echo " Deploying to PROD environment..." | tee deploy_prod_log.txt
     - psql -h db -U prod_user -d proddb -f Department.sql
     - psql -h db -U prod_user -d proddb -f Employees.sql
   artifacts:
@@ -106,5 +106,5 @@ deploy_prod:
   only:
     refs:
       - main
-  when: manual     # 👈 PROD requires manual approval
+  when: manual     #  PROD requires manual approval
   allow_failure: false
