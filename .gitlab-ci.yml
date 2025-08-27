@@ -8,20 +8,12 @@ build_job:
   stage: build
   image: liquibase/liquibase:latest
   script:
-    - echo "🔍 Validating Liquibase changelog..." | tee build_log.txt
-    # Validate the changelog syntax
-    - liquibase --url="jdbc:postgresql://db:5432/testdb" \
-        --username=test --password=test validate
+    - echo "🔨 Validating Liquibase changelogs..."
+    - liquibase --changelog-file=changelog.xml validate
   artifacts:
     paths:
       - build_log.txt
     expire_in: 1 week
-  only:
-    refs:
-      - main
-    changes:
-      - "changelog.xml"
-      - "README.md"
 
 # ---------------- TEST STAGE ----------------
 test_job:
@@ -35,58 +27,43 @@ test_job:
     POSTGRES_USER: test
     POSTGRES_PASSWORD: test
   script:
-    - echo "🧪 Applying schema in TEST database..." | tee test_log.txt
+    - echo "🧪 Spinning up Postgres for TEST..."
+    - echo "🧪 Applying Liquibase changelog to test DB..."
     - liquibase --url="jdbc:postgresql://db:5432/testdb" \
-        --username=test --password=test update
-    - echo "✅ Schema applied successfully in TEST environment" | tee -a test_log.txt
-    # Example check - verify tables exist
-    - |
-      psql -h db -U test -d testdb -c "\dt"
-      psql -h db -U test -d testdb -c "SELECT * FROM department;"
+                --username=$POSTGRES_USER --password=$POSTGRES_PASSWORD \
+                --changelog-file=changelog.xml update
+    - echo "✅ Running schema verification..."
+    - psql -h db -U $POSTGRES_USER -d $POSTGRES_DB -c "\dt"
+    - psql -h db -U $POSTGRES_USER -d $POSTGRES_DB -c "SELECT COUNT(*) FROM department;"
   artifacts:
     paths:
       - test_log.txt
     expire_in: 1 week
-  needs:
-    - build_job
-  only:
-    refs:
-      - main
-    changes:
-      - "changelog.xml"
 
-# ---------------- DEPLOY TO UAT ----------------
+# ---------------- DEPLOY UAT ----------------
 deploy_uat:
   stage: deploy
   image: liquibase/liquibase:latest
   script:
-    - echo "🚀 Deploying schema to UAT environment..." | tee deploy_uat_log.txt
+    - echo "🚀 Deploying to UAT..."
     - liquibase --url="jdbc:postgresql://uat-db:5432/uatdb" \
-        --username=$UAT_DB_USER --password=$UAT_DB_PASS update
-    - echo "✅ UAT deployment successful!" | tee -a deploy_uat_log.txt
-  artifacts:
-    paths:
-      - deploy_uat_log.txt
-    expire_in: 1 week
-  needs:
-    - test_job
-  when: manual   # Safe manual trigger for UAT
+                --username=$UAT_DB_USER --password=$UAT_DB_PASS \
+                --changelog-file=changelog.xml update
+  when: manual   # 👈 manual trigger for safety
+  environment:
+    name: uat
   allow_failure: false
 
-# ---------------- DEPLOY TO PROD ----------------
+# ---------------- DEPLOY PROD ----------------
 deploy_prod:
   stage: deploy
   image: liquibase/liquibase:latest
   script:
-    - echo "🚀 Deploying schema to PROD environment..." | tee deploy_prod_log.txt
+    - echo "🚀 Deploying to PROD..."
     - liquibase --url="jdbc:postgresql://prod-db:5432/proddb" \
-        --username=$PROD_DB_USER --password=$PROD_DB_PASS update
-    - echo "✅ PROD deployment successful!" | tee -a deploy_prod_log.txt
-  artifacts:
-    paths:
-      - deploy_prod_log.txt
-    expire_in: 1 week
-  needs:
-    - deploy_uat
-  when: manual   # Trigger manually after UAT
+                --username=$PROD_DB_USER --password=$PROD_DB_PASS \
+                --changelog-file=changelog.xml update
+  when: manual   # 👈 manual trigger
+  environment:
+    name: production
   allow_failure: false
