@@ -1,5 +1,6 @@
 stages:
   - build
+  - lint
   - test
   - deploy
 
@@ -7,12 +8,16 @@ stages:
 build_job:
   stage: build
   script:
-    - echo "🔨 Starting build stage..." | tee build_log.txt
-    - echo "Validating SQL files syntax" | tee -a build_log.txt
+    - echo "Starting build stage..." | tee build_log.txt
+    - echo "Validating SQL files syntax (basic check)" | tee -a build_log.txt
     - ls -l | tee -a build_log.txt
     - |
-      for file in *.sql; do
-        echo "Checking $file syntax (simulation only)" | tee -a build_log.txt
+      for file in Department.sql Employees.sql; do
+        if [ -f "$file" ]; then
+          echo "Found $file" | tee -a build_log.txt
+        else
+          echo "Missing $file" && exit 1
+        fi
       done
   artifacts:
     paths:
@@ -25,23 +30,73 @@ build_job:
       - "*.sql"
       - "README.md"
 
+# ---------------- LINT STAGE ----------------
+lint_job:
+  stage: lint
+  image: python:3.11
+  before_script:
+    - pip install sqlfluff
+  script:
+    - echo "Running SQLFluff linting..." | tee lint_log.txt
+    - sqlfluff lint Department.sql | tee -a lint_log.txt
+    - sqlfluff lint Employees.sql | tee -a lint_log.txt
+  artifacts:
+    paths:
+      - lint_log.txt
+    expire_in: 1 week
+  needs:
+    - build_job
+  only:
+    refs:
+      - main
+    changes:
+      - "*.sql"
+
 # ---------------- TEST STAGE ----------------
 test_job:
   stage: test
+  image: postgres:15
+  variables:
+    POSTGRES_DB: testdb
+    POSTGRES_USER: testuser
+    POSTGRES_PASSWORD: testpass
+  services:
+    - postgres:15
   script:
-    - echo "🧪 Starting test stage..." | tee test_log.txt
-    - echo "Simulating execution of Departments.sql and Employees.sql" | tee -a test_log.txt
-    - |
-      for file in Departments.sql Employees.sql; do
-        echo "Testing $file on TEST environment (simulation only)" | tee -a test_log.txt
-      done
-    - echo "Validating APEX app export (f101.sql)..." | tee -a test_log.txt
+    - echo "Running Postgres unit tests..." | tee test_log.txt
+
+    # Load schema SQLs
+    - echo "Applying Department.sql" | tee -a test_log.txt
+    - psql -h postgres -U $POSTGRES_USER -d $POSTGRES_DB -f Department.sql
+    - echo "Applying Employees.sql" | tee -a test_log.txt
+    - psql -h postgres -U $POSTGRES_USER -d $POSTGRES_DB -f Employees.sql
+
+    # Assertions
+    - echo "Checking if department table exists" | tee -a test_log.txt
+    - psql -h postgres -U $POSTGRES_USER -d $POSTGRES_DB -c "SELECT to_regclass('department');"
+
+    - echo "Checking if employees table exists" | tee -a test_log.txt
+    - psql -h postgres -U $POSTGRES_USER -d $POSTGRES_DB -c "SELECT to_regclass('employees');"
+
+    - echo "Checking Employees -> Department FK relation (if defined)" | tee -a test_log.txt
+    - psql -h postgres -U $POSTGRES_USER -d $POSTGRES_DB -c "
+        SELECT conname, confrelid::regclass
+        FROM pg_constraint
+        WHERE conrelid = 'employees'::regclass AND contype = 'f';
+      "
+
+    # Optional: Insert a sample record and test
+    - echo "Inserting sample data into Department & Employees" | tee -a test_log.txt
+    - psql -h postgres -U $POSTGRES_USER -d $POSTGRES_DB -c "INSERT INTO department (dept_id, dept_name) VALUES (1, 'HR');"
+    - psql -h postgres -U $POSTGRES_USER -d $POSTGRES_DB -c "INSERT INTO employees (emp_id, emp_name, dept_id) VALUES (100, 'Alice', 1);"
+    - psql -h postgres -U $POSTGRES_USER -d $POSTGRES_DB -c "SELECT * FROM employees e JOIN department d ON e.dept_id = d.dept_id;" | tee -a test_log.txt
+
   artifacts:
     paths:
       - test_log.txt
     expire_in: 1 week
   needs:
-    - build_job
+    - lint_job
   only:
     refs:
       - main
@@ -55,7 +110,7 @@ deploy_job:
     - echo "🚀 Starting deploy stage..." | tee deploy_log.txt
     - echo "Deploying SQL files to production (simulation only)" | tee -a deploy_log.txt
     - |
-      for file in Departments.sql Employees.sql f101.sql; do
+      for file in Department.sql Employees.sql f101.sql; do
         echo "Deploying $file to PROD environment (simulation only)" | tee -a deploy_log.txt
       done
   artifacts:
@@ -69,5 +124,5 @@ deploy_job:
       - main
     changes:
       - "*.sql"
-  when: manual     # 🔹 manual trigger for safety
+  when: manual
   allow_failure: false
