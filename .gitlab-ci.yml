@@ -16,9 +16,12 @@ build_job:
     POSTGRES_PASSWORD: test
   script:
     - echo "🔨 Validating Liquibase changelogs..."
-    - liquibase --url="jdbc:postgresql://db:5432/$POSTGRES_DB" \
-                --username=$POSTGRES_USER --password=$POSTGRES_PASSWORD \
-                --changelog-file=changelog.xml validate
+    - liquibase \
+        --url="jdbc:postgresql://db:5432/$POSTGRES_DB" \
+        --username=$POSTGRES_USER \
+        --password=$POSTGRES_PASSWORD \
+        --changelog-file=changelog.xml \
+        validate
   artifacts:
     paths:
       - build_log.txt
@@ -37,9 +40,12 @@ test_job:
     POSTGRES_PASSWORD: test
   script:
     - echo "🧪 Spinning up Postgres for TEST..."
-    - liquibase --url="jdbc:postgresql://db:5432/$POSTGRES_DB" \
-                --username=$POSTGRES_USER --password=$POSTGRES_PASSWORD \
-                --changelog-file=changelog.xml update
+    - liquibase \
+        --url="jdbc:postgresql://db:5432/$POSTGRES_DB" \
+        --username=$POSTGRES_USER \
+        --password=$POSTGRES_PASSWORD \
+        --changelog-file=changelog.xml \
+        update
     - echo "✅ Running schema verification..."
     - psql -h db -U $POSTGRES_USER -d $POSTGRES_DB -c "\dt"
     - psql -h db -U $POSTGRES_USER -d $POSTGRES_DB -c "SELECT COUNT(*) FROM department;"
@@ -54,9 +60,12 @@ deploy_uat:
   image: liquibase/liquibase:latest
   script:
     - echo "🚀 Deploying to UAT..."
-    - liquibase --url="jdbc:postgresql://uat-db:5432/uatdb" \
-                --username=$UAT_DB_USER --password=$UAT_DB_PASS \
-                --changelog-file=changelog.xml update
+    - liquibase \
+        --url="jdbc:postgresql://uat-db:5432/uatdb" \
+        --username=$UAT_DB_USER \
+        --password=$UAT_DB_PASS \
+        --changelog-file=changelog.xml \
+        update
   when: manual
   environment:
     name: uat
@@ -68,9 +77,12 @@ deploy_prod:
   image: liquibase/liquibase:latest
   script:
     - echo "🚀 Deploying to PROD..."
-    - liquibase --url="jdbc:postgresql://prod-db:5432/proddb" \
-                --username=$PROD_DB_USER --password=$PROD_DB_PASS \
-                --changelog-file=changelog.xml update
+    - liquibase \
+        --url="jdbc:postgresql://prod-db:5432/proddb" \
+        --username=$PROD_DB_USER \
+        --password=$PROD_DB_PASS \
+        --changelog-file=changelog.xml \
+        update
   when: manual
   environment:
     name: production
