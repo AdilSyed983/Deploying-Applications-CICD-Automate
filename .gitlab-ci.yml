@@ -63,32 +63,58 @@ test_job:
   before_script: |
     export PGPASSWORD=$POSTGRES_PASSWORD
   script: |
-    echo "===== TEST: prepare DBs and apply changelog to testdb =====" | tee test_log.txt
+    echo "===== TEST: Prepare DBs and apply SQL files =====" | tee test_log.txt
 
-    for DBNAME in testdb uatdb proddb; do
-      exists=$(psql -h db -U $POSTGRES_USER -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$DBNAME';")
-      if [ "$exists" != "1" ]; then
-        echo "Creating database $DBNAME" | tee -a test_log.txt
-        psql -h db -U $POSTGRES_USER -d postgres -c "CREATE DATABASE $DBNAME;" | tee -a test_log.txt
-      else
-        echo "Database $DBNAME already exists" | tee -a test_log.txt
-      fi
-    done
+    # Create test database if missing
+    exists=$(psql -h db -U $POSTGRES_USER -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='testdb';")
+    if [ "$exists" != "1" ]; then
+      echo "Creating testdb..." | tee -a test_log.txt
+      psql -h db -U $POSTGRES_USER -d postgres -c "CREATE DATABASE testdb;" | tee -a test_log.txt
+    fi
 
-    echo "Applying changelog to testdb..." | tee -a test_log.txt
-    liquibase --url="jdbc:postgresql://db:5432/testdb" --username=$POSTGRES_USER --password=$POSTGRES_PASSWORD --changeLogFile=changelog.xml update | tee -a test_log.txt
+    # Apply DEPARTMENT.sql first
+    echo "Applying DEPARTMENT.sql..." | tee -a test_log.txt
+    psql -h db -U $POSTGRES_USER -d testdb -f DEPARTMENT.sql | tee -a test_log.txt
 
-    echo "Verifying row counts and constraints..." | tee -a test_log.txt
-    deptCount=$(psql -h db -U $POSTGRES_USER -d testdb -t -c "SELECT COUNT(*) FROM department;" | xargs); echo "department count: $deptCount" | tee -a test_log.txt
-    if [ "$deptCount" -ne 12 ]; then echo "ERROR: expected 12 departments but got $deptCount" | tee -a test_log.txt; exit 1; fi
-    empCount=$(psql -h db -U $POSTGRES_USER -d testdb -t -c "SELECT COUNT(*) FROM employee;" | xargs); echo "employee count: $empCount" | tee -a test_log.txt
-    if [ "$empCount" -ne 12 ]; then echo "ERROR: expected 12 employees but got $empCount" | tee -a test_log.txt; exit 1; fi
-    orphanCount=$(psql -h db -U $POSTGRES_USER -d testdb -t -c "SELECT COUNT(*) FROM employee e LEFT JOIN department d ON e.dept_id=d.dept_id WHERE d.dept_id IS NULL;" | xargs); echo "orphan employees count: $orphanCount" | tee -a test_log.txt
-    if [ "$orphanCount" -ne 0 ]; then echo "ERROR: $orphanCount employees have invalid dept_id" | tee -a test_log.txt; exit 1; fi
-    salaryBad=$(psql -h db -U $POSTGRES_USER -d testdb -t -c "SELECT COUNT(*) FROM employee WHERE salary <= 0 OR salary IS NULL;" | xargs); echo "invalid salary rows: $salaryBad" | tee -a test_log.txt
-    if [ "$salaryBad" -ne 0 ]; then echo "ERROR: $salaryBad rows with non-positive or null salary" | tee -a test_log.txt; exit 1; fi
+    # Apply EMPLOYEE.sql next
+    echo "Applying EMPLOYEE.sql..." | tee -a test_log.txt
+    psql -h db -U $POSTGRES_USER -d testdb -f EMPLOYEE.sql | tee -a test_log.txt
 
-    echo "All tests passed." | tee -a test_log.txt
+    echo "===== Verifying data integrity =====" | tee -a test_log.txt
+
+    # Verify DEPARTMENT count
+    deptCount=$(psql -h db -U $POSTGRES_USER -d testdb -t -c "SELECT COUNT(*) FROM department;" | xargs)
+    echo "department count: $deptCount" | tee -a test_log.txt
+    if [ "$deptCount" -ne 12 ]; then
+      echo "ERROR: Expected 12 departments, got $deptCount" | tee -a test_log.txt
+      exit 1
+    fi
+
+    # Verify EMPLOYEE count
+    empCount=$(psql -h db -U $POSTGRES_USER -d testdb -t -c "SELECT COUNT(*) FROM employee;" | xargs)
+    echo "employee count: $empCount" | tee -a test_log.txt
+    if [ "$empCount" -ne 12 ]; then
+      echo "ERROR: Expected 12 employees, got $empCount" | tee -a test_log.txt
+      exit 1
+    fi
+
+    # Verify foreign keys: all employees have valid department
+    orphanCount=$(psql -h db -U $POSTGRES_USER -d testdb -t -c "SELECT COUNT(*) FROM employee e LEFT JOIN department d ON e.dept_id=d.dept_id WHERE d.dept_id IS NULL;" | xargs)
+    echo "orphan employees count: $orphanCount" | tee -a test_log.txt
+    if [ "$orphanCount" -ne 0 ]; then
+      echo "ERROR: $orphanCount employees have invalid dept_id" | tee -a test_log.txt
+      exit 1
+    fi
+
+    # Verify salary > 0
+    salaryBad=$(psql -h db -U $POSTGRES_USER -d testdb -t -c "SELECT COUNT(*) FROM employee WHERE salary <= 0 OR salary IS NULL;" | xargs)
+    echo "invalid salary rows: $salaryBad" | tee -a test_log.txt
+    if [ "$salaryBad" -ne 0 ]; then
+      echo "ERROR: $salaryBad employees have invalid salary" | tee -a test_log.txt
+      exit 1
+    fi
+
+    echo "All tests passed successfully." | tee -a test_log.txt
   artifacts:
     paths:
       - test_log.txt
