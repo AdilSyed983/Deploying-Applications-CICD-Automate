@@ -50,7 +50,7 @@ build_job:
     refs:
       - main
 
-# ---------------- TEST STAGE ----------------
+# Test job: runs only if .sql files change
 test_job:
   stage: test
   image: $CI_REGISTRY_IMAGE/liquibase-psql:latest
