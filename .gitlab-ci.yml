@@ -215,6 +215,8 @@ deploy_uat:
     echo "UAT deploy complete."
   after_script:
     - |
+      apk add --no-cache msmtp mailx  # ensure mail exists in after_script
+      echo "set sendmail=/usr/bin/msmtp" > ~/.mailrc
       if [ "$CI_JOB_STATUS" == "success" ]; then
         echo "✅ UAT deployment succeeded for commit $CI_COMMIT_SHORT_SHA" \
         | mail -s "GitLab Pipeline Success (UAT)" fyjaan983@gmail.com
@@ -229,6 +231,7 @@ deploy_uat:
     refs:
       - main
 
+# ---------------- DEPLOY TO PROD (simulated) ----------------
 # ---------------- DEPLOY TO PROD (simulated) ----------------
 deploy_prod:
   stage: deploy
@@ -268,6 +271,8 @@ deploy_prod:
     echo "PROD deploy complete."
   after_script:
     - |
+      apk add --no-cache msmtp mailx  # ensure mail exists in after_script
+      echo "set sendmail=/usr/bin/msmtp" > ~/.mailrc
       if [ "$CI_JOB_STATUS" == "success" ]; then
         echo "✅ PROD deployment succeeded for commit $CI_COMMIT_SHORT_SHA" \
         | mail -s "GitLab Pipeline Success (PROD)" fyjaan983@gmail.com
@@ -281,3 +286,4 @@ deploy_prod:
   only:
     refs:
       - main
+
