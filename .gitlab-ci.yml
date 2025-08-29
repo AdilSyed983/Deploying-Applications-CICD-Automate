@@ -88,6 +88,9 @@ db_clone:
     paths:
       - clone.env
     expire_in: 1 hour
+  only:
+    refs:
+      - main
 # ---------------- TEST JOB ----------------
 test_job:
   stage: test
