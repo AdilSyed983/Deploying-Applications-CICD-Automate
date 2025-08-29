@@ -120,6 +120,7 @@ db_clone:
 
 # ---------------- TEST JOB (recreate DB from dump, then validate) ----------------
 # ---------------- TEST JOB (recreate DB from dump) ----------------
+# ---------------- TEST JOB (employee validation) ----------------
 test_job:
   stage: test
   image: $CI_REGISTRY_IMAGE/liquibase-psql:latest
@@ -133,22 +134,36 @@ test_job:
   needs: ["db_clone"]
   before_script: |
     export PGPASSWORD="$POSTGRES_PASSWORD"
-    # Wait for DB to be ready
     for i in $(seq 1 30); do
-      psql -h db -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT 1" && break || (echo "Waiting for DB ($i)"; sleep 2)
+      psql -h db -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT 1" && break || (echo "Waiting for DB to be ready ($i)"; sleep 2)
     done
-    # Load DBNAME from artifact
     source clone.env
-    echo "Will test DB: $DBNAME"
-    # Drop if exists and recreate database
-    if psql -h db -U "$POSTGRES_USER" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$DBNAME';" | grep -q 1; then
-      psql -h db -U "$POSTGRES_USER" -d postgres -c "DROP DATABASE \"$DBNAME\";"
-    fi
+    echo "Testing DB: $DBNAME"
+    psql -h db -U "$POSTGRES_USER" -d postgres -c "DROP DATABASE IF EXISTS \"$DBNAME\";"
     psql -h db -U "$POSTGRES_USER" -d postgres -c "CREATE DATABASE \"$DBNAME\";"
-    # Restore dump safely
-    pg_restore -h db -U "$POSTGRES_USER" -d "$DBNAME" --no-owner --clean --if-exists clone.dump
-  script:
-    - echo "Database $DBNAME restored successfully from dump."
+    pg_restore -h db -U "$POSTGRES_USER" -d "$DBNAME" --no-owner --clean clone.dump
+  script: |
+    echo "===== TEST: employee validations =====" | tee test_log.txt
+
+    # Check EMP_ID is NOT NULL
+    nullEmpID=$(psql -h db -U "$POSTGRES_USER" -d "$DBNAME" -t -c \
+      "SELECT COUNT(*) FROM employee WHERE emp_id IS NULL;" | xargs)
+    if [ "$nullEmpID" -ne 0 ]; then
+      echo "ERROR: $nullEmpID employee(s) with NULL EMP_ID" | tee -a test_log.txt
+      exit 1
+    fi
+    echo "All EMP_IDs are NOT NULL." | tee -a test_log.txt
+
+    # Check SALARY > 10000
+    lowSalary=$(psql -h db -U "$POSTGRES_USER" -d "$DBNAME" -t -c \
+      "SELECT COUNT(*) FROM employee WHERE salary <= 10000 OR salary IS NULL;" | xargs)
+    if [ "$lowSalary" -ne 0 ]; then
+      echo "ERROR: $lowSalary employee(s) with SALARY <= 10000 or NULL" | tee -a test_log.txt
+      exit 1
+    fi
+    echo "All salaries are greater than 10000." | tee -a test_log.txt
+
+    echo "Employee validation test passed." | tee -a test_log.txt
   artifacts:
     paths: [test_log.txt]
     expire_in: 1 week
