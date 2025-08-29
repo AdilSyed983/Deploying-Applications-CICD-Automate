@@ -1,12 +1,14 @@
+# Use Liquibase official image as base
 FROM liquibase/liquibase:latest
 
-# Switch to root to install packages
+# Install PostgreSQL client (default version available in Ubuntu Jammy)
 USER root
-
-# Install PostgreSQL 15 client (psql, pg_dump, pg_restore)
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends postgresql-client-15 && \
+    apt-get install -y --no-install-recommends postgresql-client && \
     rm -rf /var/lib/apt/lists/*
 
-# Switch back to liquibase user
+# Switch back to liquibase user if needed
 USER liquibase
+
+# Set any environment variables or workdir if necessary
+WORKDIR /liquibase
