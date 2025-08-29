@@ -23,8 +23,7 @@ docker_build:
     echo "Pushing image to GitLab registry..."
     docker push $CI_REGISTRY_IMAGE/liquibase-psql:latest
   only:
-    refs:
-      - main
+    refs: [main]
 
 # ---------------- BUILD STAGE ----------------
 build_job:
@@ -39,61 +38,85 @@ build_job:
     POSTGRES_DB: postgres
   script: |
     echo "===== BUILD: validate changelog (Liquibase) ====="
-    for i in $(seq 1 20); do
-      liquibase --url="jdbc:postgresql://db:5432/$POSTGRES_DB" \
-                --username=$POSTGRES_USER \
-                --password=$POSTGRES_PASSWORD \
-                --changeLogFile=changelog.xml status \
-      && break || (echo "Waiting for DB to be ready ($i)"; sleep 2)
+    for i in $(seq 1 30); do
+      psql -h db -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT 1" && break || (echo "Waiting for DB to be ready ($i)"; sleep 2)
     done
-    echo "Running liquibase validate..."
     liquibase --url="jdbc:postgresql://db:5432/$POSTGRES_DB" \
-              --username=$POSTGRES_USER \
-              --password=$POSTGRES_PASSWORD \
+              --username="$POSTGRES_USER" \
+              --password="$POSTGRES_PASSWORD" \
               --changeLogFile=changelog.xml validate
   artifacts:
-    paths:
-      - build_log.txt
+    paths: [build_log.txt]
     expire_in: 1 week
   only:
-    refs:
-      - main
+    refs: [main]
 
-# ---------------- CREATE TEMP CLONE DB ----------------
+# ---------------- CREATE TEMP CLONE DB (dump as artifact) ----------------
 db_clone:
-  stage: build
-  image: postgres:15
+  stage: clone
+  image: $CI_REGISTRY_IMAGE/liquibase-psql:latest
   services:
     - name: postgres:15
       alias: db
   variables:
     POSTGRES_USER: postgres
     POSTGRES_PASSWORD: postgres
-  before_script:
-    - export PGPASSWORD=$POSTGRES_PASSWORD
+    POSTGRES_DB: postgres
+  before_script: |
+    export PGPASSWORD="$POSTGRES_PASSWORD"
+    for i in $(seq 1 30); do
+      psql -h db -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT 1" && break || (echo "Waiting for DB to be ready ($i)"; sleep 2)
+    done
   script: |
+    set -e
     DBNAME="clone_${CI_COMMIT_SHORT_SHA}"
     echo "Creating temp DB: $DBNAME"
-    psql -h db -U $POSTGRES_USER -d postgres -c "DROP DATABASE IF EXISTS $DBNAME;"
-    psql -h db -U $POSTGRES_USER -d postgres -c "CREATE DATABASE $DBNAME;"
+    psql -h db -U "$POSTGRES_USER" -d postgres -c "DROP DATABASE IF EXISTS \"$DBNAME\";"
+    psql -h db -U "$POSTGRES_USER" -d postgres -c "CREATE DATABASE \"$DBNAME\";"
 
-    echo "Applying base schema & seed data from repo..."
-    for f in *.sql; do
-     echo "Applying $f..."
-     psql -h db -U $POSTGRES_USER -d $DBNAME -f "$f"
-    done
+    echo "Applying schema/data from repo into $DBNAME ..."
+    if [ -f changelog.xml ]; then
+      echo "Found changelog.xml -> applying via Liquibase"
+      liquibase --url="jdbc:postgresql://db:5432/$DBNAME" \
+                --username="$POSTGRES_USER" \
+                --password="$POSTGRES_PASSWORD" \
+                --changeLogFile=changelog.xml update
+    else
+      # Apply SQL files if present. Prefer ./sql/*.sql, else search current repo depth.
+      if ls sql/*.sql >/dev/null 2>&1; then
+        echo "Applying sql/*.sql in sorted order"
+        for f in $(ls sql/*.sql | sort); do
+          echo "Applying $f"
+          psql -v ON_ERROR_STOP=1 -h db -U "$POSTGRES_USER" -d "$DBNAME" -f "$f"
+        done
+      elif ls *.sql >/dev/null 2>&1 || find . -maxdepth 2 -type f -name "*.sql" | grep -q .; then
+        echo "Applying all *.sql found at repo root (depth<=2) in sorted order"
+        find . -maxdepth 2 -type f -name "*.sql" | sort | while read -r f; do
+          echo "Applying $f"
+          psql -v ON_ERROR_STOP=1 -h db -U "$POSTGRES_USER" -d "$DBNAME" -f "$f"
+        done
+      else
+        echo "ERROR: No changelog.xml and no .sql files found to build the DB."
+        exit 1
+      fi
+    fi
 
-    echo "DBNAME=$DBNAME" > clone.env
+    echo "Dumping $DBNAME to artifact clone.dump (custom format)"
+    pg_dump -h db -U "$POSTGRES_USER" -d "$DBNAME" -Fc -f clone.dump
+
+    # Save DBNAME for later jobs
+    printf "DBNAME=%s\n" "$DBNAME" > clone.env
   artifacts:
     reports:
       dotenv: clone.env
     paths:
+      - clone.dump
       - clone.env
-    expire_in: 1 hour
+    expire_in: 2 hours
   only:
-    refs:
-      - main
-# ---------------- TEST JOB ----------------
+    refs: [main]
+
+# ---------------- TEST JOB (recreate DB from dump, then validate) ----------------
 test_job:
   stage: test
   image: $CI_REGISTRY_IMAGE/liquibase-psql:latest
@@ -103,96 +126,83 @@ test_job:
   variables:
     POSTGRES_USER: postgres
     POSTGRES_PASSWORD: postgres
-  needs: ["db_clone"]   # ensures clone.env is available
+    POSTGRES_DB: postgres
+  needs: ["db_clone"]
   before_script: |
-    export PGPASSWORD=$POSTGRES_PASSWORD
-    source clone.env    # load DBNAME created in db_clone
+    export PGPASSWORD="$POSTGRES_PASSWORD"
+    for i in $(seq 1 30); do
+      psql -h db -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT 1" && break || (echo "Waiting for DB to be ready ($i)"; sleep 2)
+    done
+    # Load DBNAME from artifact
+    source clone.env
+    echo "Will test DB: $DBNAME"
+    # Recreate DB and restore from clone.dump
+    if psql -h db -U "$POSTGRES_USER" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$DBNAME';" | grep -q 1; then
+      psql -h db -U "$POSTGRES_USER" -d postgres -c "DROP DATABASE \"$DBNAME\";"
+    fi
+    psql -h db -U "$POSTGRES_USER" -d postgres -c "CREATE DATABASE \"$DBNAME\";"
+    pg_restore -h db -U "$POSTGRES_USER" -d "$DBNAME" --no-owner --clean clone.dump
   script: |
+    set -e
     echo "===== TEST: validating cloned DB $DBNAME =====" | tee test_log.txt
 
     # Department count check
-    deptCount=$(psql -h db -U $POSTGRES_USER -d $DBNAME -t -c \
-      "SELECT COUNT(*) FROM department;" | xargs)
+    deptCount=$(psql -h db -U "$POSTGRES_USER" -d "$DBNAME" -t -c "SELECT COUNT(*) FROM department;" | xargs)
     echo "department count: $deptCount" | tee -a test_log.txt
-    if [ "$deptCount" -ne 12 ]; then
-      echo "ERROR: expected 12 departments but got $deptCount" | tee -a test_log.txt
-      exit 1
-    fi
+    if [ "$deptCount" -ne 12 ]; then echo "ERROR: expected 12 departments but got $deptCount" | tee -a test_log.txt; exit 1; fi
 
     # Employee count check
-    empCount=$(psql -h db -U $POSTGRES_USER -d $DBNAME -t -c \
-      "SELECT COUNT(*) FROM employee;" | xargs)
+    empCount=$(psql -h db -U "$POSTGRES_USER" -d "$DBNAME" -t -c "SELECT COUNT(*) FROM employee;" | xargs)
     echo "employee count: $empCount" | tee -a test_log.txt
-    if [ "$empCount" -ne 12 ]; then
-      echo "ERROR: expected 12 employees but got $empCount" | tee -a test_log.txt
-      exit 1
-    fi
+    if [ "$empCount" -ne 12 ]; then echo "ERROR: expected 12 employees but got $empCount" | tee -a test_log.txt; exit 1; fi
 
     # Orphan employee check
-    orphanCount=$(psql -h db -U $POSTGRES_USER -d $DBNAME -t -c \
+    orphanCount=$(psql -h db -U "$POSTGRES_USER" -d "$DBNAME" -t -c \
       "SELECT COUNT(*) FROM employee e LEFT JOIN department d ON e.dept_id=d.dept_id WHERE d.dept_id IS NULL;" | xargs)
     echo "orphan employees count: $orphanCount" | tee -a test_log.txt
-    if [ "$orphanCount" -ne 0 ]; then
-      echo "ERROR: $orphanCount employees have invalid dept_id" | tee -a test_log.txt
-      exit 1
-    fi
+    if [ "$orphanCount" -ne 0 ]; then echo "ERROR: $orphanCount employees have invalid dept_id" | tee -a test_log.txt; exit 1; fi
 
     # Salary validation
-    salaryBad=$(psql -h db -U $POSTGRES_USER -d $DBNAME -t -c \
+    salaryBad=$(psql -h db -U "$POSTGRES_USER" -d "$DBNAME" -t -c \
       "SELECT COUNT(*) FROM employee WHERE salary <= 0 OR salary IS NULL;" | xargs)
     echo "invalid salary rows: $salaryBad" | tee -a test_log.txt
-    if [ "$salaryBad" -ne 0 ]; then
-      echo "ERROR: $salaryBad rows with non-positive or null salary" | tee -a test_log.txt
-      exit 1
-    fi
+    if [ "$salaryBad" -ne 0 ]; then echo "ERROR: $salaryBad rows with non-positive or null salary" | tee -a test_log.txt; exit 1; fi
 
     # Duplicate department IDs
-    dupDept=$(psql -h db -U $POSTGRES_USER -d $DBNAME -t -c \
-      "SELECT COUNT(*) FROM (SELECT dept_id, COUNT(*) c FROM department GROUP BY dept_id HAVING COUNT(*)>1) sub;" | xargs)
+    dupDept=$(psql -h db -U "$POSTGRES_USER" -d "$DBNAME" -t -c \
+      "SELECT COUNT(*) FROM (SELECT dept_id, COUNT(*) FROM department GROUP BY dept_id HAVING COUNT(*)>1) sub;" | xargs)
     echo "duplicate dept_id count: $dupDept" | tee -a test_log.txt
-    if [ "$dupDept" -ne 0 ]; then
-      echo "ERROR: duplicate dept_id found"; exit 1
-    fi
+    if [ "$dupDept" -ne 0 ]; then echo "ERROR: duplicate dept_id found" | tee -a test_log.txt; exit 1; fi
 
     # Employees without department
-    nullDept=$(psql -h db -U $POSTGRES_USER -d $DBNAME -t -c \
+    nullDept=$(psql -h db -U "$POSTGRES_USER" -d "$DBNAME" -t -c \
       "SELECT COUNT(*) FROM employee WHERE dept_id IS NULL;" | xargs)
     echo "employees with null dept_id: $nullDept" | tee -a test_log.txt
-    if [ "$nullDept" -ne 0 ]; then
-      echo "ERROR: employees without dept assignment"; exit 1
-    fi
+    if [ "$nullDept" -ne 0 ]; then echo "ERROR: employees without dept assignment" | tee -a test_log.txt; exit 1; fi
 
     # Salary range check
-    salaryRange=$(psql -h db -U $POSTGRES_USER -d $DBNAME -t -c \
+    salaryRange=$(psql -h db -U "$POSTGRES_USER" -d "$DBNAME" -t -c \
       "SELECT COUNT(*) FROM employee WHERE salary < 10000 OR salary > 200000;" | xargs)
     echo "employees with salary outside 10k–200k: $salaryRange" | tee -a test_log.txt
-    if [ "$salaryRange" -ne 0 ]; then
-      echo "ERROR: salary out of expected range"; exit 1
-    fi
+    if [ "$salaryRange" -ne 0 ]; then echo "ERROR: salary out of expected range" | tee -a test_log.txt; exit 1; fi
 
-    # Department names not null
-    emptyDeptName=$(psql -h db -U $POSTGRES_USER -d $DBNAME -t -c \
+    # Department names not null/empty
+    emptyDeptName=$(psql -h db -U "$POSTGRES_USER" -d "$DBNAME" -t -c \
       "SELECT COUNT(*) FROM department WHERE dept_name IS NULL OR TRIM(dept_name)='';" | xargs)
     echo "departments with empty name: $emptyDeptName" | tee -a test_log.txt
-    if [ "$emptyDeptName" -ne 0 ]; then
-      echo "ERROR: found departments with invalid name"; exit 1
-    fi
+    if [ "$emptyDeptName" -ne 0 ]; then echo "ERROR: found departments with invalid name" | tee -a test_log.txt; exit 1; fi
 
-    # Departments with no employees
-    deptNoEmp=$(psql -h db -U $POSTGRES_USER -d $DBNAME -t -c \
+    # Departments with no employees (warn only)
+    deptNoEmp=$(psql -h db -U "$POSTGRES_USER" -d "$DBNAME" -t -c \
       "SELECT COUNT(*) FROM department d WHERE NOT EXISTS (SELECT 1 FROM employee e WHERE e.dept_id=d.dept_id);" | xargs)
     echo "departments with no employees: $deptNoEmp" | tee -a test_log.txt
-    if [ "$deptNoEmp" -ne 0 ]; then
-      echo "WARNING: some departments have no employees"; fi
-
     echo "All tests passed for $DBNAME" | tee -a test_log.txt
   artifacts:
-    paths:
-      - test_log.txt
+    paths: [test_log.txt]
     expire_in: 1 week
   only:
-    refs:
-      - main
+    refs: [main]
+
 # ---------------- DEPLOY TO UAT (simulated) ----------------
 deploy_uat:
   stage: deploy
@@ -204,26 +214,47 @@ deploy_uat:
     POSTGRES_USER: postgres
     POSTGRES_PASSWORD: postgres
   before_script: |
-    export PGPASSWORD=$POSTGRES_PASSWORD
+    export PGPASSWORD="$POSTGRES_PASSWORD"
+    for i in $(seq 1 30); do
+      psql -h db -U "$POSTGRES_USER" -d postgres -c "SELECT 1" && break || (echo "Waiting for DB to be ready ($i)"; sleep 2)
+    done
   script: |
     echo "===== DEPLOY UAT (simulated) ====="
-    exists=$(psql -h db -U $POSTGRES_USER -d postgres -tAc \
-      "SELECT 1 FROM pg_database WHERE datname='uatdb';")
+    exists=$(psql -h db -U "$POSTGRES_USER" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='uatdb';")
     if [ "$exists" != "1" ]; then
-      psql -h db -U $POSTGRES_USER -d postgres -c "CREATE DATABASE uatdb;"
+      psql -h db -U "$POSTGRES_USER" -d postgres -c "CREATE DATABASE uatdb;"
     fi
-    echo "Applying changelog to uatdb (simulated UAT)..."
     liquibase --url="jdbc:postgresql://db:5432/uatdb" \
-              --username=$POSTGRES_USER \
-              --password=$POSTGRES_PASSWORD \
+              --username="$POSTGRES_USER" \
+              --password="$POSTGRES_PASSWORD" \
               --changeLogFile=changelog.xml update
     echo "UAT deploy complete."
   when: manual
   environment:
     name: uat
   only:
-    refs:
-      - main
+    refs: [main]
+  after_script:
+    - |
+      set -e
+      apk add --no-cache msmtp mailx >/dev/null 2>&1 || true
+      cat > ~/.msmtprc <<EOF
+      account default
+      host smtp.gmail.com
+      port 587
+      auth on
+      user fyjaan983@gmail.com
+      password $SMTP_PASSWORD
+      from fyjaan983@gmail.com
+      tls on
+      tls_starttls on
+      EOF
+      chmod 600 ~/.msmtprc || true
+      if [ "$CI_JOB_STATUS" = "success" ]; then
+        printf "✅ UAT deployment succeeded for commit %s on %s\nLogs: %s\n" "$CI_COMMIT_SHORT_SHA" "$CI_COMMIT_REF_NAME" "$CI_JOB_URL" | mail -s "GitLab Pipeline Success (UAT)" fyjaan983@gmail.com || true
+      else
+        printf "❌ UAT deployment FAILED for commit %s on %s\nLogs: %s\n" "$CI_COMMIT_SHORT_SHA" "$CI_COMMIT_REF_NAME" "$CI_JOB_URL" | mail -s "GitLab Pipeline FAILED (UAT)" fyjaan983@gmail.com || true
+      fi
 
 # ---------------- DEPLOY TO PROD (simulated) ----------------
 deploy_prod:
@@ -236,28 +267,49 @@ deploy_prod:
     POSTGRES_USER: postgres
     POSTGRES_PASSWORD: postgres
   before_script: |
-    export PGPASSWORD=$POSTGRES_PASSWORD
+    export PGPASSWORD="$POSTGRES_PASSWORD"
+    for i in $(seq 1 30); do
+      psql -h db -U "$POSTGRES_USER" -d postgres -c "SELECT 1" && break || (echo "Waiting for DB to be ready ($i)"; sleep 2)
+    done
   script: |
     echo "===== DEPLOY PROD (simulated) ====="
-    exists=$(psql -h db -U $POSTGRES_USER -d postgres -tAc \
-      "SELECT 1 FROM pg_database WHERE datname='proddb';")
+    exists=$(psql -h db -U "$POSTGRES_USER" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='proddb';")
     if [ "$exists" != "1" ]; then
-      psql -h db -U $POSTGRES_USER -d postgres -c "CREATE DATABASE proddb;"
+      psql -h db -U "$POSTGRES_USER" -d postgres -c "CREATE DATABASE proddb;"
     fi
-    echo "Applying changelog to proddb (simulated PROD)..."
     liquibase --url="jdbc:postgresql://db:5432/proddb" \
-              --username=$POSTGRES_USER \
-              --password=$POSTGRES_PASSWORD \
+              --username="$POSTGRES_USER" \
+              --password="$POSTGRES_PASSWORD" \
               --changeLogFile=changelog.xml update
     echo "PROD deploy complete."
   when: manual
   environment:
     name: production
   only:
-    refs:
-      - main
+    refs: [main]
+  after_script:
+    - |
+      set -e
+      apk add --no-cache msmtp mailx >/dev/null 2>&1 || true
+      cat > ~/.msmtprc <<EOF
+      account default
+      host smtp.gmail.com
+      port 587
+      auth on
+      user fyjaan983@gmail.com
+      password $SMTP_PASSWORD
+      from fyjaan983@gmail.com
+      tls on
+      tls_starttls on
+      EOF
+      chmod 600 ~/.msmtprc || true
+      if [ "$CI_JOB_STATUS" = "success" ]; then
+        printf "✅ PROD deployment succeeded for commit %s on %s\nLogs: %s\n" "$CI_COMMIT_SHORT_SHA" "$CI_COMMIT_REF_NAME" "$CI_JOB_URL" | mail -s "GitLab Pipeline Success (PROD)" fyjaan983@gmail.com || true
+      else
+        printf "❌ PROD deployment FAILED for commit %s on %s\nLogs: %s\n" "$CI_COMMIT_SHORT_SHA" "$CI_COMMIT_REF_NAME" "$CI_JOB_URL" | mail -s "GitLab Pipeline FAILED (PROD)" fyjaan983@gmail.com || true
+      fi
 
-# ---------------- CLEANUP ON FAILURE ----------------
+# ---------------- CLEANUP (mostly no-op; services are ephemeral) ----------------
 rollback_clone:
   stage: cleanup
   image: postgres:15
@@ -267,14 +319,12 @@ rollback_clone:
   variables:
     POSTGRES_USER: postgres
     POSTGRES_PASSWORD: postgres
-    PGPASSWORD: $POSTGRES_PASSWORD
+    POSTGRES_DB: postgres
+  before_script: |
+    export PGPASSWORD="$POSTGRES_PASSWORD"
   script: |
-    source clone.env || true
-    if [ -n "$DBNAME" ]; then
-      echo "Dropping temp DB $DBNAME"
-      psql -h db -U $POSTGRES_USER -d postgres -c "DROP DATABASE IF EXISTS $DBNAME;"
-    fi
-  when: on_failure
+    # Nothing persistent to clean in GitLab CI service containers; kept for parity.
+    echo "Cleanup stage completed."
+  when: always
   only:
-    refs:
-      - main
+    refs: [main]
