@@ -87,6 +87,30 @@ test_job:
     if [ "$orphanCount" -ne 0 ]; then echo "ERROR: $orphanCount employees have invalid dept_id" | tee -a test_log.txt; exit 1; fi
     salaryBad=$(psql -h db -U $POSTGRES_USER -d testdb -t -c "SELECT COUNT(*) FROM employee WHERE salary <= 0 OR salary IS NULL;" | xargs); echo "invalid salary rows: $salaryBad" | tee -a test_log.txt
     if [ "$salaryBad" -ne 0 ]; then echo "ERROR: $salaryBad rows with non-positive or null salary" | tee -a test_log.txt; exit 1; fi
+     echo  "Check for duplicate department IDs"
+    dupDept=$(psql -h db -U $POSTGRES_USER -d testdb -t -c "SELECT COUNT(*) FROM (SELECT dept_id, COUNT(*) c FROM department GROUP BY dept_id HAVING COUNT(*)>1) sub;" | xargs); 
+    echo "duplicate dept_id count: $dupDept" | tee -a test_log.txt
+    if [ "$dupDept" -ne 0 ]; then echo "ERROR: duplicate dept_id found"; exit 1; fi
+
+    echo  "Ensure all employees are assigned to a department"
+    nullDept=$(psql -h db -U $POSTGRES_USER -d testdb -t -c "SELECT COUNT(*) FROM employee WHERE dept_id IS NULL;" | xargs); 
+    echo "employees with null dept_id: $nullDept" | tee -a test_log.txt
+    if [ "$nullDept" -ne 0 ]; then echo "ERROR: employees without dept assignment"; exit 1; fi
+
+    echo "Ensure salaries are within a valid business range (e.g., 10,000–200,000)"
+    salaryRange=$(psql -h db -U $POSTGRES_USER -d testdb -t -c "SELECT COUNT(*) FROM employee WHERE salary < 10000 OR salary > 200000;" | xargs); 
+    echo "employees with salary outside 10k–200k: $salaryRange" | tee -a test_log.txt
+    if [ "$salaryRange" -ne 0 ]; then echo "ERROR: salary out of expected range"; exit 1; fi
+
+    echo  "Ensure department names are not null or empty"
+    emptyDeptName=$(psql -h db -U $POSTGRES_USER -d testdb -t -c "SELECT COUNT(*) FROM department WHERE dept_name IS NULL OR TRIM(dept_name)='';" | xargs);
+    echo "departments with empty name: $emptyDeptName" | tee -a test_log.txt
+    if [ "$emptyDeptName" -ne 0 ]; then echo "ERROR: found departments with invalid name"; exit 1; fi
+
+    echo  "Verify each department has at least one employee"
+    deptNoEmp=$(psql -h db -U $POSTGRES_USER -d testdb -t -c "SELECT COUNT(*) FROM department d WHERE NOT EXISTS (SELECT 1 FROM employee e WHERE e.dept_id=d.dept_id);" | xargs);
+    echo "departments with no employees: $deptNoEmp" | tee -a test_log.txt
+    if [ "$deptNoEmp" -ne 0 ]; then echo "WARNING: some departments have no employees"; fi
 
     echo "All tests passed." | tee -a test_log.txt
   artifacts:
