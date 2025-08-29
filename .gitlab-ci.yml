@@ -79,11 +79,16 @@ db_clone:
     psql -h db -U $POSTGRES_USER -d postgres -c "CREATE DATABASE $DBNAME;"
 
     echo "Applying base schema & seed data from repo..."
-    for f in sql/*.sql; do
-      echo "Applying $f"
-      psql -h db -U $POSTGRES_USER -d $DBNAME -f $f
-    done
-    echo "✅ Temp DB ready: $DBNAME"
+    if ls ./*.sql 1> /dev/null 2>&1; then
+      for f in ./*.sql; do
+        echo "Applying $f"
+        psql -h db -U $POSTGRES_USER -d $DBNAME -f $f
+      done
+    else
+      echo "No .sql files found in repo root. Skipping seed data."
+    fi
+
+    echo "Temp DB ready: $DBNAME"
   artifacts:
     reports:
       dotenv: clone.env
