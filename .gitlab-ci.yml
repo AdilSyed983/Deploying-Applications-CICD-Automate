@@ -167,7 +167,7 @@ notify_uat_success:
   script: |
     echo "UAT deployment succeeded for commit $CI_COMMIT_SHORT_SHA on branch $CI_COMMIT_REF_NAME by $GITLAB_USER_NAME. 
     See pipeline: $CI_PIPELINE_URL" \
-    | mailx -s "GitLab Pipeline SUCCESS: UAT Deploy" fyjaan983@gmail.com
+    | mail -s "GitLab Pipeline SUCCESS: UAT Deploy" fyjaan983@gmail.com
   when: on_success
   needs: ["deploy_uat"]
   only:
@@ -194,7 +194,7 @@ notify_uat_failure:
     Job Logs:
     -------------------
     $(cat deploy_uat.log)" \
-    | mailx -s "GitLab Pipeline FAILURE: UAT Deploy" fyjaan983@gmail.com
+    | mail -s "GitLab Pipeline FAILURE: UAT Deploy" fyjaan983@gmail.com
   when: on_failure
   needs: ["deploy_uat"]
   only:
@@ -247,7 +247,7 @@ notify_prod_success:
   script: |
     echo "Production deployment succeeded for commit $CI_COMMIT_SHORT_SHA on branch $CI_COMMIT_REF_NAME by $GITLAB_USER_NAME. 
     See pipeline: $CI_PIPELINE_URL" \
-    | mailx -s "GitLab Pipeline SUCCESS: PROD Deploy" fyjaan983@gmail.com
+    | mail -s "GitLab Pipeline SUCCESS: PROD Deploy" fyjaan983@gmail.com
   when: on_success
   needs: ["deploy_prod"]
   only:
@@ -268,13 +268,13 @@ notify_prod_failure:
     - echo "password $SMTP_PASSWORD" >> ~/.mailrc
     - echo "from fyjaan983@gmail.com" >> ~/.mailrc
   script: |
-    echo "❌ Production deployment FAILED for commit $CI_COMMIT_SHORT_SHA on branch $CI_COMMIT_REF_NAME by $GITLAB_USER_NAME. 
+    echo "Production deployment FAILED for commit $CI_COMMIT_SHORT_SHA on branch $CI_COMMIT_REF_NAME by $GITLAB_USER_NAME. 
     See pipeline: $CI_PIPELINE_URL
     
     Job Logs:
     -------------------
     $(cat deploy_prod.log)" \
-    | mailx -s "GitLab Pipeline FAILURE: PROD Deploy" fyjaan983@gmail.com
+    | mail -s "GitLab Pipeline FAILURE: PROD Deploy" fyjaan983@gmail.com
   when: on_failure
   needs: ["deploy_prod"]
   only:
