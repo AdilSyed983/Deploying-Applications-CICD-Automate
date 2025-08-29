@@ -95,7 +95,6 @@ db_clone:
   only:
     refs:
       - main
-
 # ---------------- TEST JOB ----------------
 test_job:
   stage: test
@@ -106,11 +105,13 @@ test_job:
   variables:
     POSTGRES_USER: postgres
     POSTGRES_PASSWORD: postgres
+  dependencies:    # pull in clone.env from db_clone
+    - db_clone
   before_script: |
     export PGPASSWORD=$POSTGRES_PASSWORD
-    source clone.env
+    source clone.env   # load DBNAME from clone.env
   script: |
-    echo "===== TEST: running on clone DB $DBNAME =====" | tee test_log.txt
+    echo "===== TEST: apply changelog to $DBNAME =====" | tee test_log.txt
 
     echo "Applying changelog to $DBNAME..." | tee -a test_log.txt
     liquibase --url="jdbc:postgresql://db:5432/$DBNAME" \
@@ -118,22 +119,89 @@ test_job:
               --password=$POSTGRES_PASSWORD \
               --changeLogFile=changelog.xml update | tee -a test_log.txt
 
-    # (your validations stay exactly the same, just using $DBNAME instead of testdb)
-    deptCount=$(psql -h db -U $POSTGRES_USER -d $DBNAME -t -c "SELECT COUNT(*) FROM department;" | xargs)
+    echo "Verifying row counts and constraints on $DBNAME..." | tee -a test_log.txt
+
+    # Department count check
+    deptCount=$(psql -h db -U $POSTGRES_USER -d $DBNAME -t -c \
+      "SELECT COUNT(*) FROM department;" | xargs)
     echo "department count: $deptCount" | tee -a test_log.txt
     if [ "$deptCount" -ne 12 ]; then
       echo "ERROR: expected 12 departments but got $deptCount" | tee -a test_log.txt
       exit 1
     fi
 
-    empCount=$(psql -h db -U $POSTGRES_USER -d $DBNAME -t -c "SELECT COUNT(*) FROM employee;" | xargs)
+    # Employee count check
+    empCount=$(psql -h db -U $POSTGRES_USER -d $DBNAME -t -c \
+      "SELECT COUNT(*) FROM employee;" | xargs)
     echo "employee count: $empCount" | tee -a test_log.txt
     if [ "$empCount" -ne 12 ]; then
       echo "ERROR: expected 12 employees but got $empCount" | tee -a test_log.txt
       exit 1
     fi
 
-    echo "✅ All tests passed on $DBNAME" | tee -a test_log.txt
+    # Orphan employee check
+    orphanCount=$(psql -h db -U $POSTGRES_USER -d $DBNAME -t -c \
+      "SELECT COUNT(*) FROM employee e LEFT JOIN department d ON e.dept_id=d.dept_id WHERE d.dept_id IS NULL;" | xargs)
+    echo "orphan employees count: $orphanCount" | tee -a test_log.txt
+    if [ "$orphanCount" -ne 0 ]; then
+      echo "ERROR: $orphanCount employees have invalid dept_id" | tee -a test_log.txt
+      exit 1
+    fi
+
+    # Salary validation
+    salaryBad=$(psql -h db -U $POSTGRES_USER -d $DBNAME -t -c \
+      "SELECT COUNT(*) FROM employee WHERE salary <= 0 OR salary IS NULL;" | xargs)
+    echo "invalid salary rows: $salaryBad" | tee -a test_log.txt
+    if [ "$salaryBad" -ne 0 ]; then
+      echo "ERROR: $salaryBad rows with non-positive or null salary" | tee -a test_log.txt
+      exit 1
+    fi
+
+    # Duplicate department IDs
+    dupDept=$(psql -h db -U $POSTGRES_USER -d $DBNAME -t -c \
+      "SELECT COUNT(*) FROM (SELECT dept_id, COUNT(*) c FROM department GROUP BY dept_id HAVING COUNT(*)>1) sub;" | xargs)
+    echo "duplicate dept_id count: $dupDept" | tee -a test_log.txt
+    if [ "$dupDept" -ne 0 ]; then
+      echo "ERROR: duplicate dept_id found" | tee -a test_log.txt
+      exit 1
+    fi
+
+    # Employees without department
+    nullDept=$(psql -h db -U $POSTGRES_USER -d $DBNAME -t -c \
+      "SELECT COUNT(*) FROM employee WHERE dept_id IS NULL;" | xargs)
+    echo "employees with null dept_id: $nullDept" | tee -a test_log.txt
+    if [ "$nullDept" -ne 0 ]; then
+      echo "ERROR: employees without dept assignment" | tee -a test_log.txt
+      exit 1
+    fi
+
+    # Salary range check
+    salaryRange=$(psql -h db -U $POSTGRES_USER -d $DBNAME -t -c \
+      "SELECT COUNT(*) FROM employee WHERE salary < 10000 OR salary > 200000;" | xargs)
+    echo "employees with salary outside 10k–200k: $salaryRange" | tee -a test_log.txt
+    if [ "$salaryRange" -ne 0 ]; then
+      echo "ERROR: salary out of expected range" | tee -a test_log.txt
+      exit 1
+    fi
+
+    # Department names not null
+    emptyDeptName=$(psql -h db -U $POSTGRES_USER -d $DBNAME -t -c \
+      "SELECT COUNT(*) FROM department WHERE dept_name IS NULL OR TRIM(dept_name)='';" | xargs)
+    echo "departments with empty name: $emptyDeptName" | tee -a test_log.txt
+    if [ "$emptyDeptName" -ne 0 ]; then
+      echo "ERROR: found departments with invalid name" | tee -a test_log.txt
+      exit 1
+    fi
+
+    # Departments with no employees
+    deptNoEmp=$(psql -h db -U $POSTGRES_USER -d $DBNAME -t -c \
+      "SELECT COUNT(*) FROM department d WHERE NOT EXISTS (SELECT 1 FROM employee e WHERE e.dept_id=d.dept_id);" | xargs)
+    echo "departments with no employees: $deptNoEmp" | tee -a test_log.txt
+    if [ "$deptNoEmp" -ne 0 ]; then
+      echo "WARNING: some departments have no employees" | tee -a test_log.txt
+    fi
+
+    echo "All tests passed for $DBNAME." | tee -a test_log.txt
   artifacts:
     paths:
       - test_log.txt
