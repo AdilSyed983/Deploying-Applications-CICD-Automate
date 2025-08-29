@@ -179,34 +179,47 @@ test_job:
 # ---------------- DEPLOY TO UAT (simulated) ----------------
 deploy_uat:
   stage: deploy
-  image: $CI_REGISTRY_IMAGE/liquibase-psql:latest
+  image: alpine:latest
   services:
     - name: postgres:15
       alias: db
   variables:
     POSTGRES_USER: postgres
     POSTGRES_PASSWORD: postgres
-  before_script: |
-    export PGPASSWORD=$POSTGRES_PASSWORD
-  script: |
-    echo "===== DEPLOY UAT (simulated) ====="
-    exists=$(psql -h db -U $POSTGRES_USER -d postgres -tAc \
-      "SELECT 1 FROM pg_database WHERE datname='uatdb';")
-    if [ "$exists" != "1" ]; then
-      psql -h db -U $POSTGRES_USER -d postgres -c "CREATE DATABASE uatdb;"
+  before_script:
+    - apk add --no-cache postgresql-client
+    - export PGPASSWORD=$POSTGRES_PASSWORD
+  script:
+    - apk add --no-cache msmtp mailx
+    - echo "account default" > ~/.msmtprc
+    - echo "host smtp.gmail.com" >> ~/.msmtprc
+    - echo "port 587" >> ~/.msmtprc
+    - echo "auth on" >> ~/.msmtprc
+    - echo "user fyjaan983@gmail.com" >> ~/.msmtprc
+    - echo "password $SMTP_PASSWORD" >> ~/.msmtprc
+    - echo "from fyjaan983@gmail.com" >> ~/.msmtprc
+    - echo "tls on" >> ~/.msmtprc
+    - echo "tls_starttls on" >> ~/.msmtprc
+    - chmod 600 ~/.msmtprc
+    - export MAILRC=/dev/null
+
+    # --- Deployment ---
+    - echo "===== DEPLOY UAT (simulated) ====="
+    - psql -h db -U $POSTGRES_USER -d postgres -c "CREATE DATABASE IF NOT EXISTS uatdb;"
+    - liquibase --url="jdbc:postgresql://db:5432/uatdb" \
+                --username=$POSTGRES_USER \
+                --password=$POSTGRES_PASSWORD \
+                --changeLogFile=changelog.xml update
+  after_script:
+  - |
+    if [ "$CI_JOB_STATUS" == "success" ]; then
+      echo "✅ UAT deployment succeeded for commit $CI_COMMIT_SHORT_SHA" \
+      | mail -s "GitLab Pipeline Success (UAT)" fyjaan983@gmail.com
+    else
+      echo "❌ UAT deployment FAILED for commit $CI_COMMIT_SHORT_SHA. Check job logs: $CI_JOB_URL" \
+      | mail -s "GitLab Pipeline FAILED (UAT)" fyjaan983@gmail.com
     fi
-    echo "Applying changelog to uatdb (simulated UAT)..."
-    liquibase --url="jdbc:postgresql://db:5432/uatdb" \
-              --username=$POSTGRES_USER \
-              --password=$POSTGRES_PASSWORD \
-              --changeLogFile=changelog.xml update
-    echo "UAT deploy complete."
-  when: manual
-  environment:
-    name: uat
-  only:
-    refs:
-      - main
+
 
 # ---------------- DEPLOY TO PROD (simulated) ----------------
 deploy_prod:
@@ -220,6 +233,18 @@ deploy_prod:
     POSTGRES_PASSWORD: postgres
   before_script: |
     export PGPASSWORD=$POSTGRES_PASSWORD
+    apk add --no-cache msmtp mailx
+    echo "account default" > ~/.msmtprc
+    echo "host smtp.gmail.com" >> ~/.msmtprc
+    echo "port 587" >> ~/.msmtprc
+    echo "auth on" >> ~/.msmtprc
+    echo "user fyjaan983@gmail.com" >> ~/.msmtprc
+    echo "password $SMTP_PASSWORD" >> ~/.msmtprc
+    echo "from fyjaan983@gmail.com" >> ~/.msmtprc
+    echo "tls on" >> ~/.msmtprc
+    echo "tls_starttls on" >> ~/.msmtprc
+    chmod 600 ~/.msmtprc
+    export MAILRC=/dev/null   # disable ~/.mailrc to avoid confusion
   script: |
     echo "===== DEPLOY PROD (simulated) ====="
     exists=$(psql -h db -U $POSTGRES_USER -d postgres -tAc \
@@ -233,6 +258,15 @@ deploy_prod:
               --password=$POSTGRES_PASSWORD \
               --changeLogFile=changelog.xml update
     echo "PROD deploy complete."
+  after_script:
+    - |
+      if [ "$CI_JOB_STATUS" == "success" ]; then
+        echo "✅ PROD deployment succeeded for commit $CI_COMMIT_SHORT_SHA" \
+        | mail -s "GitLab Pipeline Success (PROD)" fyjaan983@gmail.com
+      else
+        echo "❌ PROD deployment FAILED for commit $CI_COMMIT_SHORT_SHA. Check job logs: $CI_JOB_URL" \
+        | mail -s "GitLab Pipeline FAILED (PROD)" fyjaan983@gmail.com
+      fi
   when: manual
   environment:
     name: production
