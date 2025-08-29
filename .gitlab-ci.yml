@@ -1,3 +1,5 @@
+image: registry.gitlab.com/fyjaan983/ci-cd-automation-through-jenkins/liquibase-psql:latest
+
 stages:
   - docker_build
   - build
