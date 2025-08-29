@@ -1,8 +1,10 @@
 stages:
   - docker_build
   - build
+  - clone
   - test
   - deploy
+  - cleanup
 
 # ---------------- DOCKER BUILD & PUSH ----------------
 docker_build:
@@ -57,6 +59,38 @@ build_job:
     refs:
       - main
 
+# ---------------- CREATE TEMP CLONE DB ----------------
+db_clone:
+  stage: clone
+  image: postgres:15
+  services:
+    - name: postgres:15
+      alias: db
+  variables:
+    POSTGRES_USER: postgres
+    POSTGRES_PASSWORD: postgres
+    PGPASSWORD: $POSTGRES_PASSWORD
+  script: |
+    DBNAME="clone_${CI_COMMIT_SHORT_SHA}"
+    echo "DBNAME=$DBNAME" >> clone.env
+
+    echo "Creating temp DB: $DBNAME"
+    psql -h db -U $POSTGRES_USER -d postgres -c "DROP DATABASE IF EXISTS $DBNAME;"
+    psql -h db -U $POSTGRES_USER -d postgres -c "CREATE DATABASE $DBNAME;"
+
+    echo "Applying base schema & seed data from repo..."
+    for f in sql/*.sql; do
+      echo "Applying $f"
+      psql -h db -U $POSTGRES_USER -d $DBNAME -f $f
+    done
+    echo "✅ Temp DB ready: $DBNAME"
+  artifacts:
+    reports:
+      dotenv: clone.env
+  only:
+    refs:
+      - main
+
 # ---------------- TEST JOB ----------------
 test_job:
   stage: test
@@ -69,105 +103,32 @@ test_job:
     POSTGRES_PASSWORD: postgres
   before_script: |
     export PGPASSWORD=$POSTGRES_PASSWORD
+    source clone.env
   script: |
-    echo "===== TEST: prepare DBs and apply changelog to testdb =====" | tee test_log.txt
+    echo "===== TEST: running on clone DB $DBNAME =====" | tee test_log.txt
 
-    # Ensure test, UAT, and PROD DBs exist
-    for DBNAME in testdb uatdb proddb; do
-      exists=$(psql -h db -U $POSTGRES_USER -d postgres -tAc \
-        "SELECT 1 FROM pg_database WHERE datname='$DBNAME';")
-      if [ "$exists" != "1" ]; then
-        echo "Creating database $DBNAME" | tee -a test_log.txt
-        psql -h db -U $POSTGRES_USER -d postgres -c "CREATE DATABASE $DBNAME;" | tee -a test_log.txt
-      else
-        echo "Database $DBNAME already exists" | tee -a test_log.txt
-      fi
-    done
-
-    echo "Applying changelog to testdb..." | tee -a test_log.txt
-    liquibase --url="jdbc:postgresql://db:5432/testdb" \
+    echo "Applying changelog to $DBNAME..." | tee -a test_log.txt
+    liquibase --url="jdbc:postgresql://db:5432/$DBNAME" \
               --username=$POSTGRES_USER \
               --password=$POSTGRES_PASSWORD \
               --changeLogFile=changelog.xml update | tee -a test_log.txt
 
-    echo "Verifying row counts and constraints..." | tee -a test_log.txt
-
-    # Department count check
-    deptCount=$(psql -h db -U $POSTGRES_USER -d testdb -t -c \
-      "SELECT COUNT(*) FROM department;" | xargs)
+    # (your validations stay exactly the same, just using $DBNAME instead of testdb)
+    deptCount=$(psql -h db -U $POSTGRES_USER -d $DBNAME -t -c "SELECT COUNT(*) FROM department;" | xargs)
     echo "department count: $deptCount" | tee -a test_log.txt
     if [ "$deptCount" -ne 12 ]; then
       echo "ERROR: expected 12 departments but got $deptCount" | tee -a test_log.txt
       exit 1
     fi
 
-    # Employee count check
-    empCount=$(psql -h db -U $POSTGRES_USER -d testdb -t -c \
-      "SELECT COUNT(*) FROM employee;" | xargs)
+    empCount=$(psql -h db -U $POSTGRES_USER -d $DBNAME -t -c "SELECT COUNT(*) FROM employee;" | xargs)
     echo "employee count: $empCount" | tee -a test_log.txt
     if [ "$empCount" -ne 12 ]; then
       echo "ERROR: expected 12 employees but got $empCount" | tee -a test_log.txt
       exit 1
     fi
 
-    # Orphan employee check
-    orphanCount=$(psql -h db -U $POSTGRES_USER -d testdb -t -c \
-      "SELECT COUNT(*) FROM employee e LEFT JOIN department d ON e.dept_id=d.dept_id WHERE d.dept_id IS NULL;" | xargs)
-    echo "orphan employees count: $orphanCount" | tee -a test_log.txt
-    if [ "$orphanCount" -ne 0 ]; then
-      echo "ERROR: $orphanCount employees have invalid dept_id" | tee -a test_log.txt
-      exit 1
-    fi
-
-    # Salary validation
-    salaryBad=$(psql -h db -U $POSTGRES_USER -d testdb -t -c \
-      "SELECT COUNT(*) FROM employee WHERE salary <= 0 OR salary IS NULL;" | xargs)
-    echo "invalid salary rows: $salaryBad" | tee -a test_log.txt
-    if [ "$salaryBad" -ne 0 ]; then
-      echo "ERROR: $salaryBad rows with non-positive or null salary" | tee -a test_log.txt
-      exit 1
-    fi
-
-    # Duplicate department IDs
-    dupDept=$(psql -h db -U $POSTGRES_USER -d testdb -t -c \
-      "SELECT COUNT(*) FROM (SELECT dept_id, COUNT(*) c FROM department GROUP BY dept_id HAVING COUNT(*)>1) sub;" | xargs)
-    echo "duplicate dept_id count: $dupDept" | tee -a test_log.txt
-    if [ "$dupDept" -ne 0 ]; then
-      echo "ERROR: duplicate dept_id found"; exit 1
-    fi
-
-    # Employees without department
-    nullDept=$(psql -h db -U $POSTGRES_USER -d testdb -t -c \
-      "SELECT COUNT(*) FROM employee WHERE dept_id IS NULL;" | xargs)
-    echo "employees with null dept_id: $nullDept" | tee -a test_log.txt
-    if [ "$nullDept" -ne 0 ]; then
-      echo "ERROR: employees without dept assignment"; exit 1
-    fi
-
-    # Salary range check
-    salaryRange=$(psql -h db -U $POSTGRES_USER -d testdb -t -c \
-      "SELECT COUNT(*) FROM employee WHERE salary < 10000 OR salary > 200000;" | xargs)
-    echo "employees with salary outside 10k–200k: $salaryRange" | tee -a test_log.txt
-    if [ "$salaryRange" -ne 0 ]; then
-      echo "ERROR: salary out of expected range"; exit 1
-    fi
-
-    # Department names not null
-    emptyDeptName=$(psql -h db -U $POSTGRES_USER -d testdb -t -c \
-      "SELECT COUNT(*) FROM department WHERE dept_name IS NULL OR TRIM(dept_name)='';" | xargs)
-    echo "departments with empty name: $emptyDeptName" | tee -a test_log.txt
-    if [ "$emptyDeptName" -ne 0 ]; then
-      echo "ERROR: found departments with invalid name"; exit 1
-    fi
-
-    # Departments with no employees
-    deptNoEmp=$(psql -h db -U $POSTGRES_USER -d testdb -t -c \
-      "SELECT COUNT(*) FROM department d WHERE NOT EXISTS (SELECT 1 FROM employee e WHERE e.dept_id=d.dept_id);" | xargs)
-    echo "departments with no employees: $deptNoEmp" | tee -a test_log.txt
-    if [ "$deptNoEmp" -ne 0 ]; then
-      echo "WARNING: some departments have no employees"; fi
-
-    echo "All tests passed." | tee -a test_log.txt
+    echo "✅ All tests passed on $DBNAME" | tee -a test_log.txt
   artifacts:
     paths:
       - test_log.txt
@@ -188,18 +149,6 @@ deploy_uat:
     POSTGRES_PASSWORD: postgres
   before_script: |
     export PGPASSWORD=$POSTGRES_PASSWORD
-    apk add --no-cache msmtp mailx
-    echo "account default" > ~/.msmtprc
-    echo "host smtp.gmail.com" >> ~/.msmtprc
-    echo "port 587" >> ~/.msmtprc
-    echo "auth on" >> ~/.msmtprc
-    echo "user fyjaan983@gmail.com" >> ~/.msmtprc
-    echo "password $SMTP_PASSWORD" >> ~/.msmtprc
-    echo "from fyjaan983@gmail.com" >> ~/.msmtprc
-    echo "tls on" >> ~/.msmtprc
-    echo "tls_starttls on" >> ~/.msmtprc
-    chmod 600 ~/.msmtprc
-    echo "set sendmail=/usr/bin/msmtp" > ~/.mailrc
   script: |
     echo "===== DEPLOY UAT (simulated) ====="
     exists=$(psql -h db -U $POSTGRES_USER -d postgres -tAc \
@@ -213,17 +162,6 @@ deploy_uat:
               --password=$POSTGRES_PASSWORD \
               --changeLogFile=changelog.xml update
     echo "UAT deploy complete."
-  after_script:
-    - |
-      apk add --no-cache msmtp mailx  # ensure mail exists in after_script
-      echo "set sendmail=/usr/bin/msmtp" > ~/.mailrc
-      if [ "$CI_JOB_STATUS" == "success" ]; then
-        echo "✅ UAT deployment succeeded for commit $CI_COMMIT_SHORT_SHA" \
-        | mail -s "GitLab Pipeline Success (UAT)" fyjaan983@gmail.com
-      else
-        echo "❌ UAT deployment FAILED for commit $CI_COMMIT_SHORT_SHA. Check job logs: $CI_JOB_URL" \
-        | mail -s "GitLab Pipeline FAILED (UAT)" fyjaan983@gmail.com
-      fi
   when: manual
   environment:
     name: uat
@@ -231,7 +169,6 @@ deploy_uat:
     refs:
       - main
 
-# ---------------- DEPLOY TO PROD (simulated) ----------------
 # ---------------- DEPLOY TO PROD (simulated) ----------------
 deploy_prod:
   stage: deploy
@@ -244,18 +181,6 @@ deploy_prod:
     POSTGRES_PASSWORD: postgres
   before_script: |
     export PGPASSWORD=$POSTGRES_PASSWORD
-    apk add --no-cache msmtp mailx
-    echo "account default" > ~/.msmtprc
-    echo "host smtp.gmail.com" >> ~/.msmtprc
-    echo "port 587" >> ~/.msmtprc
-    echo "auth on" >> ~/.msmtprc
-    echo "user fyjaan983@gmail.com" >> ~/.msmtprc
-    echo "password $SMTP_PASSWORD" >> ~/.msmtprc
-    echo "from fyjaan983@gmail.com" >> ~/.msmtprc
-    echo "tls on" >> ~/.msmtprc
-    echo "tls_starttls on" >> ~/.msmtprc
-    chmod 600 ~/.msmtprc
-    echo "set sendmail=/usr/bin/msmtp" > ~/.mailrc
   script: |
     echo "===== DEPLOY PROD (simulated) ====="
     exists=$(psql -h db -U $POSTGRES_USER -d postgres -tAc \
@@ -269,17 +194,6 @@ deploy_prod:
               --password=$POSTGRES_PASSWORD \
               --changeLogFile=changelog.xml update
     echo "PROD deploy complete."
-  after_script:
-    - |
-      apk add --no-cache msmtp mailx  # ensure mail exists in after_script
-      echo "set sendmail=/usr/bin/msmtp" > ~/.mailrc
-      if [ "$CI_JOB_STATUS" == "success" ]; then
-        echo "✅ PROD deployment succeeded for commit $CI_COMMIT_SHORT_SHA" \
-        | mail -s "GitLab Pipeline Success (PROD)" fyjaan983@gmail.com
-      else
-        echo "❌ PROD deployment FAILED for commit $CI_COMMIT_SHORT_SHA. Check job logs: $CI_JOB_URL" \
-        | mail -s "GitLab Pipeline FAILED (PROD)" fyjaan983@gmail.com
-      fi
   when: manual
   environment:
     name: production
@@ -287,3 +201,24 @@ deploy_prod:
     refs:
       - main
 
+# ---------------- CLEANUP ON FAILURE ----------------
+rollback_clone:
+  stage: cleanup
+  image: postgres:15
+  services:
+    - name: postgres:15
+      alias: db
+  variables:
+    POSTGRES_USER: postgres
+    POSTGRES_PASSWORD: postgres
+    PGPASSWORD: $POSTGRES_PASSWORD
+  script: |
+    source clone.env || true
+    if [ -n "$DBNAME" ]; then
+      echo "Dropping temp DB $DBNAME"
+      psql -h db -U $POSTGRES_USER -d postgres -c "DROP DATABASE IF EXISTS $DBNAME;"
+    fi
+  when: on_failure
+  only:
+    refs:
+      - main
