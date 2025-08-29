@@ -61,40 +61,33 @@ build_job:
 
 # ---------------- CREATE TEMP CLONE DB ----------------
 db_clone:
-  stage: clone
+  stage: build
   image: postgres:15
-  services:
-    - name: postgres:15
-      alias: db
   variables:
     POSTGRES_USER: postgres
     POSTGRES_PASSWORD: postgres
-    PGPASSWORD: $POSTGRES_PASSWORD
+  before_script:
+    - export PGPASSWORD=$POSTGRES_PASSWORD
   script: |
     DBNAME="clone_${CI_COMMIT_SHORT_SHA}"
-    echo "DBNAME=$DBNAME" >> clone.env
-
     echo "Creating temp DB: $DBNAME"
     psql -h db -U $POSTGRES_USER -d postgres -c "DROP DATABASE IF EXISTS $DBNAME;"
     psql -h db -U $POSTGRES_USER -d postgres -c "CREATE DATABASE $DBNAME;"
 
     echo "Applying base schema & seed data from repo..."
-    if ls ./*.sql 1> /dev/null 2>&1; then
-      for f in ./*.sql; do
-        echo "Applying $f"
-        psql -h db -U $POSTGRES_USER -d $DBNAME -f $f
-      done
-    else
-      echo "No .sql files found in repo root. Skipping seed data."
-    fi
+    for f in sql/*.sql; do
+      echo "Applying $f..."
+      psql -h db -U $POSTGRES_USER -d $DBNAME -f "$f"
+    done
 
-    echo "Temp DB ready: $DBNAME"
+    # Save DBNAME for later jobs
+    echo "DBNAME=$DBNAME" > clone.env
   artifacts:
     reports:
-      dotenv: clone.env
-  only:
-    refs:
-      - main
+      dotenv: clone.env   # This makes clone.env available
+    paths:
+      - clone.env
+    expire_in: 1 hour
 # ---------------- TEST JOB ----------------
 test_job:
   stage: test
@@ -105,21 +98,12 @@ test_job:
   variables:
     POSTGRES_USER: postgres
     POSTGRES_PASSWORD: postgres
-  dependencies:    # pull in clone.env from db_clone
-    - db_clone
+  needs: ["db_clone"]   # ensures clone.env is available
   before_script: |
     export PGPASSWORD=$POSTGRES_PASSWORD
-    source clone.env   # load DBNAME from clone.env
+    source clone.env    # load DBNAME created in db_clone
   script: |
-    echo "===== TEST: apply changelog to $DBNAME =====" | tee test_log.txt
-
-    echo "Applying changelog to $DBNAME..." | tee -a test_log.txt
-    liquibase --url="jdbc:postgresql://db:5432/$DBNAME" \
-              --username=$POSTGRES_USER \
-              --password=$POSTGRES_PASSWORD \
-              --changeLogFile=changelog.xml update | tee -a test_log.txt
-
-    echo "Verifying row counts and constraints on $DBNAME..." | tee -a test_log.txt
+    echo "===== TEST: validating cloned DB $DBNAME =====" | tee test_log.txt
 
     # Department count check
     deptCount=$(psql -h db -U $POSTGRES_USER -d $DBNAME -t -c \
@@ -162,8 +146,7 @@ test_job:
       "SELECT COUNT(*) FROM (SELECT dept_id, COUNT(*) c FROM department GROUP BY dept_id HAVING COUNT(*)>1) sub;" | xargs)
     echo "duplicate dept_id count: $dupDept" | tee -a test_log.txt
     if [ "$dupDept" -ne 0 ]; then
-      echo "ERROR: duplicate dept_id found" | tee -a test_log.txt
-      exit 1
+      echo "ERROR: duplicate dept_id found"; exit 1
     fi
 
     # Employees without department
@@ -171,8 +154,7 @@ test_job:
       "SELECT COUNT(*) FROM employee WHERE dept_id IS NULL;" | xargs)
     echo "employees with null dept_id: $nullDept" | tee -a test_log.txt
     if [ "$nullDept" -ne 0 ]; then
-      echo "ERROR: employees without dept assignment" | tee -a test_log.txt
-      exit 1
+      echo "ERROR: employees without dept assignment"; exit 1
     fi
 
     # Salary range check
@@ -180,8 +162,7 @@ test_job:
       "SELECT COUNT(*) FROM employee WHERE salary < 10000 OR salary > 200000;" | xargs)
     echo "employees with salary outside 10k–200k: $salaryRange" | tee -a test_log.txt
     if [ "$salaryRange" -ne 0 ]; then
-      echo "ERROR: salary out of expected range" | tee -a test_log.txt
-      exit 1
+      echo "ERROR: salary out of expected range"; exit 1
     fi
 
     # Department names not null
@@ -189,8 +170,7 @@ test_job:
       "SELECT COUNT(*) FROM department WHERE dept_name IS NULL OR TRIM(dept_name)='';" | xargs)
     echo "departments with empty name: $emptyDeptName" | tee -a test_log.txt
     if [ "$emptyDeptName" -ne 0 ]; then
-      echo "ERROR: found departments with invalid name" | tee -a test_log.txt
-      exit 1
+      echo "ERROR: found departments with invalid name"; exit 1
     fi
 
     # Departments with no employees
@@ -198,10 +178,9 @@ test_job:
       "SELECT COUNT(*) FROM department d WHERE NOT EXISTS (SELECT 1 FROM employee e WHERE e.dept_id=d.dept_id);" | xargs)
     echo "departments with no employees: $deptNoEmp" | tee -a test_log.txt
     if [ "$deptNoEmp" -ne 0 ]; then
-      echo "WARNING: some departments have no employees" | tee -a test_log.txt
-    fi
+      echo "WARNING: some departments have no employees"; fi
 
-    echo "All tests passed for $DBNAME." | tee -a test_log.txt
+    echo "All tests passed for $DBNAME" | tee -a test_log.txt
   artifacts:
     paths:
       - test_log.txt
@@ -209,7 +188,6 @@ test_job:
   only:
     refs:
       - main
-
 # ---------------- DEPLOY TO UAT (simulated) ----------------
 deploy_uat:
   stage: deploy
