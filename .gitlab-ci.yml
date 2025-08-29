@@ -149,6 +149,58 @@ deploy_uat:
     refs:
       - main
 
+# ---------------- EMAIL NOTIFICATION: UAT ----------------
+notify_uat_success:
+  stage: notify
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache mailx msmtp
+    - echo "defaults" > ~/.mailrc
+    - echo "account default" >> ~/.mailrc
+    - echo "host smtp.gmail.com" >> ~/.mailrc
+    - echo "port 587" >> ~/.mailrc
+    - echo "auth on" >> ~/.mailrc
+    - echo "user fyjaan983@gmail.com" >> ~/.mailrc
+    - echo "password $SMTP_PASSWORD" >> ~/.mailrc
+    - echo "from fyjaan983@gmail.com" >> ~/.mailrc
+  script: |
+    echo "UAT deployment succeeded for commit $CI_COMMIT_SHORT_SHA on branch $CI_COMMIT_REF_NAME by $GITLAB_USER_NAME. 
+    See pipeline: $CI_PIPELINE_URL" \
+    | mailx -s "GitLab Pipeline SUCCESS: UAT Deploy" fyjaan983@gmail.com
+  when: on_success
+  needs: ["deploy_uat"]
+  only:
+    refs:
+      - main
+
+notify_uat_failure:
+  stage: notify
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache mailx msmtp
+    - echo "defaults" > ~/.mailrc
+    - echo "account default" >> ~/.mailrc
+    - echo "host smtp.gmail.com" >> ~/.mailrc
+    - echo "port 587" >> ~/.mailrc
+    - echo "auth on" >> ~/.mailrc
+    - echo "user fyjaan983@gmail.com" >> ~/.mailrc
+    - echo "password $SMTP_PASSWORD" >> ~/.mailrc
+    - echo "from fyjaan983@gmail.com" >> ~/.mailrc
+  script: |
+    echo "UAT deployment FAILED for commit $CI_COMMIT_SHORT_SHA on branch $CI_COMMIT_REF_NAME by $GITLAB_USER_NAME. 
+    See pipeline: $CI_PIPELINE_URL
+    
+    Job Logs:
+    -------------------
+    $(cat deploy_uat.log)" \
+    | mailx -s "GitLab Pipeline FAILURE: UAT Deploy" fyjaan983@gmail.com
+  when: on_failure
+  needs: ["deploy_uat"]
+  only:
+    refs:
+      - main
+
+
 # ---------------- DEPLOY TO PROD (simulated) ----------------
 deploy_prod:
   stage: deploy
@@ -176,3 +228,55 @@ deploy_prod:
   only:
     refs:
       - main
+
+  # ---------------- EMAIL NOTIFICATION: PROD ----------------
+notify_prod_success:
+  stage: notify
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache mailx msmtp
+    - echo "defaults" > ~/.mailrc
+    - echo "account default" >> ~/.mailrc
+    - echo "host smtp.gmail.com" >> ~/.mailrc
+    - echo "port 587" >> ~/.mailrc
+    - echo "auth on" >> ~/.mailrc
+    - echo "user fyjaan983@gmail.com" >> ~/.mailrc
+    - echo "password $SMTP_PASSWORD" >> ~/.mailrc
+    - echo "from fyjaan983@gmail.com" >> ~/.mailrc
+  script: |
+    echo "Production deployment succeeded for commit $CI_COMMIT_SHORT_SHA on branch $CI_COMMIT_REF_NAME by $GITLAB_USER_NAME. 
+    See pipeline: $CI_PIPELINE_URL" \
+    | mailx -s "GitLab Pipeline SUCCESS: PROD Deploy" fyjaan983@gmail.com
+  when: on_success
+  needs: ["deploy_prod"]
+  only:
+    refs:
+      - main
+
+notify_prod_failure:
+  stage: notify
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache mailx msmtp
+    - echo "defaults" > ~/.mailrc
+    - echo "account default" >> ~/.mailrc
+    - echo "host smtp.gmail.com" >> ~/.mailrc
+    - echo "port 587" >> ~/.mailrc
+    - echo "auth on" >> ~/.mailrc
+    - echo "user fyjaan983@gmail.com" >> ~/.mailrc
+    - echo "password $SMTP_PASSWORD" >> ~/.mailrc
+    - echo "from fyjaan983@gmail.com" >> ~/.mailrc
+  script: |
+    echo "❌ Production deployment FAILED for commit $CI_COMMIT_SHORT_SHA on branch $CI_COMMIT_REF_NAME by $GITLAB_USER_NAME. 
+    See pipeline: $CI_PIPELINE_URL
+    
+    Job Logs:
+    -------------------
+    $(cat deploy_prod.log)" \
+    | mailx -s "GitLab Pipeline FAILURE: PROD Deploy" fyjaan983@gmail.com
+  when: on_failure
+  needs: ["deploy_prod"]
+  only:
+    refs:
+      - main
+
