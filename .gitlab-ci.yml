@@ -78,24 +78,35 @@ db_clone:
 
     echo "Applying schema/data from repo into $DBNAME ..."
     if [ -f changelog.xml ]; then
+      echo "Found changelog.xml -> applying via Liquibase"
       liquibase --url="jdbc:postgresql://db:5432/$DBNAME" \
                 --username="$POSTGRES_USER" \
                 --password="$POSTGRES_PASSWORD" \
                 --changeLogFile=changelog.xml update
     else
+      # Apply SQL files if present. Prefer ./sql/*.sql, else search current repo depth.
       if ls sql/*.sql >/dev/null 2>&1; then
+        echo "Applying sql/*.sql in sorted order"
         for f in $(ls sql/*.sql | sort); do
+          echo "Applying $f"
+          psql -v ON_ERROR_STOP=1 -h db -U "$POSTGRES_USER" -d "$DBNAME" -f "$f"
+        done
+      elif ls *.sql >/dev/null 2>&1 || find . -maxdepth 2 -type f -name "*.sql" | grep -q .; then
+        echo "Applying all *.sql found at repo root (depth<=2) in sorted order"
+        find . -maxdepth 2 -type f -name "*.sql" | sort | while read -r f; do
+          echo "Applying $f"
           psql -v ON_ERROR_STOP=1 -h db -U "$POSTGRES_USER" -d "$DBNAME" -f "$f"
         done
       else
-        find . -maxdepth 2 -type f -name "*.sql" | sort | while read -r f; do
-          psql -v ON_ERROR_STOP=1 -h db -U "$POSTGRES_USER" -d "$DBNAME" -f "$f"
-        done
+        echo "ERROR: No changelog.xml and no .sql files found to build the DB."
+        exit 1
       fi
     fi
 
-    echo "Dumping $DBNAME to artifact clone.dump"
+    echo "Dumping $DBNAME to artifact clone.dump (custom format)"
     pg_dump -h db -U "$POSTGRES_USER" -d "$DBNAME" -Fc -f clone.dump
+
+    # Save DBNAME for later jobs
     printf "DBNAME=%s\n" "$DBNAME" > clone.env
   artifacts:
     reports:
@@ -107,7 +118,8 @@ db_clone:
   only:
     refs: [main]
 
-# ---------------- TEST JOB ----------------
+# ---------------- TEST JOB (recreate DB from dump, then validate) ----------------
+# ---------------- TEST JOB (recreate DB from dump) ----------------
 test_job:
   stage: test
   image: $CI_REGISTRY_IMAGE/liquibase-psql:latest
@@ -121,40 +133,28 @@ test_job:
   needs: ["db_clone"]
   before_script: |
     export PGPASSWORD="$POSTGRES_PASSWORD"
+    # Wait for DB to be ready
     for i in $(seq 1 30); do
       psql -h db -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT 1" && break || (echo "Waiting for DB ($i)"; sleep 2)
     done
+    # Load DBNAME from artifact
     source clone.env
-    echo "Testing DB: $DBNAME" | tee test_log.txt
-    psql -h db -U "$POSTGRES_USER" -d postgres -c "DROP DATABASE IF EXISTS \"$DBNAME\";"
+    echo "Will test DB: $DBNAME"
+    # Drop if exists and recreate database
+    if psql -h db -U "$POSTGRES_USER" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$DBNAME';" | grep -q 1; then
+      psql -h db -U "$POSTGRES_USER" -d postgres -c "DROP DATABASE \"$DBNAME\";"
+    fi
     psql -h db -U "$POSTGRES_USER" -d postgres -c "CREATE DATABASE \"$DBNAME\";"
-    pg_restore -h db -U "$POSTGRES_USER" -d "$DBNAME" --no-owner clone.dump >> test_log.txt 2>&1
-  script: |
-    echo "Database $DBNAME restored successfully from dump." | tee -a test_log.txt
+    # Restore dump safely
+    pg_restore -h db -U "$POSTGRES_USER" -d "$DBNAME" --no-owner --clean --if-exists clone.dump
+  script:
+    - echo "Database $DBNAME restored successfully from dump."
   artifacts:
     paths: [test_log.txt]
     expire_in: 1 week
   only:
     refs: [main]
-
-# ---------------- NOTIFICATION FUNCTION ----------------
-# reusable before_script (sequence) that writes ~/.msmtprc and secures it
-.setup_email: &setup_email
-  - apk add --no-cache msmtp mailx >/dev/null 2>&1 || true
-  - |
-    cat > ~/.msmtprc <<EOF
-    account default
-    host smtp.gmail.com
-    port 587
-    auth on
-    user fyjaan983@gmail.com
-    password $SMTP_PASSWORD
-    from fyjaan983@gmail.com
-    tls on
-    tls_starttls on
-    EOF
-  - chmod 600 ~/.msmtprc || true
-# ---------------- DEPLOY TO UAT ----------------
+# ---------------- DEPLOY TO UAT (simulated) ----------------
 deploy_uat:
   stage: deploy
   image: $CI_REGISTRY_IMAGE/liquibase-psql:latest
@@ -164,28 +164,50 @@ deploy_uat:
   variables:
     POSTGRES_USER: postgres
     POSTGRES_PASSWORD: postgres
-  before_script: *setup_email
+  before_script: |
+    export PGPASSWORD="$POSTGRES_PASSWORD"
+    for i in $(seq 1 30); do
+      psql -h db -U "$POSTGRES_USER" -d postgres -c "SELECT 1" && break || (echo "Waiting for DB to be ready ($i)"; sleep 2)
+    done
   script: |
-    echo "===== DEPLOY UAT ====="
-    psql -h db -U "$POSTGRES_USER" -d postgres -c "CREATE DATABASE IF NOT EXISTS uatdb;"
+    echo "===== DEPLOY UAT (simulated) ====="
+    exists=$(psql -h db -U "$POSTGRES_USER" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='uatdb';")
+    if [ "$exists" != "1" ]; then
+      psql -h db -U "$POSTGRES_USER" -d postgres -c "CREATE DATABASE uatdb;"
+    fi
     liquibase --url="jdbc:postgresql://db:5432/uatdb" \
               --username="$POSTGRES_USER" \
               --password="$POSTGRES_PASSWORD" \
               --changeLogFile=changelog.xml update
-  after_script: |
-    STATUS=$CI_JOB_STATUS
-    if [ "$STATUS" = "success" ]; then
-      echo "✅ UAT deployment succeeded for $CI_COMMIT_SHORT_SHA" | mail -s "UAT Deployment Success" fyjaan983@gmail.com
-    else
-      echo "❌ UAT deployment failed for $CI_COMMIT_SHORT_SHA" | mail -s "UAT Deployment Failed" fyjaan983@gmail.com
-    fi
+    echo "UAT deploy complete."
   when: manual
   environment:
     name: uat
   only:
     refs: [main]
+  after_script:
+    - |
+      set -e
+      apk add --no-cache msmtp mailx >/dev/null 2>&1 || true
+      cat > ~/.msmtprc <<EOF
+      account default
+      host smtp.gmail.com
+      port 587
+      auth on
+      user fyjaan983@gmail.com
+      password $SMTP_PASSWORD
+      from fyjaan983@gmail.com
+      tls on
+      tls_starttls on
+      EOF
+      chmod 600 ~/.msmtprc || true
+      if [ "$CI_JOB_STATUS" = "success" ]; then
+        printf "✅ UAT deployment succeeded for commit %s on %s\nLogs: %s\n" "$CI_COMMIT_SHORT_SHA" "$CI_COMMIT_REF_NAME" "$CI_JOB_URL" | mail -s "GitLab Pipeline Success (UAT)" fyjaan983@gmail.com || true
+      else
+        printf "❌ UAT deployment FAILED for commit %s on %s\nLogs: %s\n" "$CI_COMMIT_SHORT_SHA" "$CI_COMMIT_REF_NAME" "$CI_JOB_URL" | mail -s "GitLab Pipeline FAILED (UAT)" fyjaan983@gmail.com || true
+      fi
 
-# ---------------- DEPLOY TO PROD ----------------
+# ---------------- DEPLOY TO PROD (simulated) ----------------
 deploy_prod:
   stage: deploy
   image: $CI_REGISTRY_IMAGE/liquibase-psql:latest
@@ -195,33 +217,73 @@ deploy_prod:
   variables:
     POSTGRES_USER: postgres
     POSTGRES_PASSWORD: postgres
-  before_script: *setup_email
+  before_script: |
+    export PGPASSWORD="$POSTGRES_PASSWORD"
+    for i in $(seq 1 30); do
+      psql -h db -U "$POSTGRES_USER" -d postgres -c "SELECT 1" && break || (echo "Waiting for DB to be ready ($i)"; sleep 2)
+    done
   script: |
-    echo "===== DEPLOY PROD ====="
-    psql -h db -U "$POSTGRES_USER" -d postgres -c "CREATE DATABASE IF NOT EXISTS proddb;"
+    echo "===== DEPLOY PROD (simulated) ====="
+    exists=$(psql -h db -U "$POSTGRES_USER" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='proddb';")
+    if [ "$exists" != "1" ]; then
+      psql -h db -U "$POSTGRES_USER" -d postgres -c "CREATE DATABASE proddb;"
+    fi
     liquibase --url="jdbc:postgresql://db:5432/proddb" \
               --username="$POSTGRES_USER" \
               --password="$POSTGRES_PASSWORD" \
               --changeLogFile=changelog.xml update
-  after_script: |
-    STATUS=$CI_JOB_STATUS
-    if [ "$STATUS" = "success" ]; then
-      echo "✅ PROD deployment succeeded for $CI_COMMIT_SHORT_SHA" | mail -s "PROD Deployment Success" fyjaan983@gmail.com
-    else
-      echo "❌ PROD deployment failed for $CI_COMMIT_SHORT_SHA" | mail -s "PROD Deployment Failed" fyjaan983@gmail.com
-    fi
+    echo "PROD deploy complete."
   when: manual
   environment:
     name: production
   only:
     refs: [main]
+  after_script:
+    - |
+      set -e
+      apk add --no-cache msmtp mailx >/dev/null 2>&1 || true
+      cat > ~/.msmtprc <<EOF
+      account default
+      host smtp.gmail.com
+      port 587
+      auth on
+      user fyjaan983@gmail.com
+      password $SMTP_PASSWORD
+      from fyjaan983@gmail.com
+      tls on
+      tls_starttls on
+      EOF
+      chmod 600 ~/.msmtprc || true
+      if [ "$CI_JOB_STATUS" = "success" ]; then
+        printf "✅ PROD deployment succeeded for commit %s on %s\nLogs: %s\n" "$CI_COMMIT_SHORT_SHA" "$CI_COMMIT_REF_NAME" "$CI_JOB_URL" | mail -s "GitLab Pipeline Success (PROD)" fyjaan983@gmail.com || true
+      else
+        printf "❌ PROD deployment FAILED for commit %s on %s\nLogs: %s\n" "$CI_COMMIT_SHORT_SHA" "$CI_COMMIT_REF_NAME" "$CI_JOB_URL" | mail -s "GitLab Pipeline FAILED (PROD)" fyjaan983@gmail.com || true
+      fi
 
-# ---------------- CLEANUP ----------------
+# ---------------- CLEANUP (mostly no-op; services are ephemeral) ----------------
 rollback_clone:
   stage: cleanup
   image: postgres:15
-  script: echo "Reverting back as there's a failure."
+  services:
+    - name: postgres:15
+      alias: db
+  variables:
+    POSTGRES_USER: postgres
+    POSTGRES_PASSWORD: postgres
+    POSTGRES_DB: postgres
+  before_script:
+    - export PGPASSWORD="$POSTGRES_PASSWORD"
+  script:
+    - echo "Running rollback cleanup because a stage failed..."
+    # Add rollback SQL or restore commands here if needed
+    - echo "Rollback/cleanup completed."
   when: on_failure
-  needs: ["test_job","deploy_uat","deploy_prod"]
+  needs:
+    - job: test_job
+      optional: true
+    - job: deploy_uat
+      optional: true
+    - job: deploy_prod
+      optional: true
   only:
     refs: [main]
