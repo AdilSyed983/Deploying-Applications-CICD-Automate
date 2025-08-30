@@ -143,27 +143,27 @@ test_job:
     psql -h db -U "$POSTGRES_USER" -d postgres -c "CREATE DATABASE \"$DBNAME\";"
     pg_restore -h db -U "$POSTGRES_USER" -d "$DBNAME" --no-owner --clean clone.dump
   script: |
-    echo "===== TEST: employee validations =====" | tee test_log.txt
+    echo "===== TEST: employees validations =====" | tee test_log.txt
 
     # Check EMP_ID is NOT NULL
     nullEmpID=$(psql -h db -U "$POSTGRES_USER" -d "$DBNAME" -t -c \
-      "SELECT COUNT(*) FROM employee WHERE emp_id IS NULL;" | xargs)
+      "SELECT COUNT(*) FROM employees WHERE emp_id IS NULL;" | xargs)
     if [ "$nullEmpID" -ne 0 ]; then
-      echo "ERROR: $nullEmpID employee(s) with NULL EMP_ID" | tee -a test_log.txt
+      echo "ERROR: $nullEmpID employees(s) with NULL EMP_ID" | tee -a test_log.txt
       exit 1
     fi
     echo "All EMP_IDs are NOT NULL." | tee -a test_log.txt
 
     # Check SALARY > 10000
     lowSalary=$(psql -h db -U "$POSTGRES_USER" -d "$DBNAME" -t -c \
-      "SELECT COUNT(*) FROM employee WHERE salary <= 10000 OR salary IS NULL;" | xargs)
+      "SELECT COUNT(*) FROM employees WHERE salary <= 10000 OR salary IS NULL;" | xargs)
     if [ "$lowSalary" -ne 0 ]; then
-      echo "ERROR: $lowSalary employee(s) with SALARY <= 10000 or NULL" | tee -a test_log.txt
+      echo "ERROR: $lowSalary employees(s) with SALARY <= 10000 or NULL" | tee -a test_log.txt
       exit 1
     fi
     echo "All salaries are greater than 10000." | tee -a test_log.txt
 
-    echo "Employee validation test passed." | tee -a test_log.txt
+    echo "Employees validation test passed." | tee -a test_log.txt
   artifacts:
     paths: [test_log.txt]
     expire_in: 1 week
