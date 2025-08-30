@@ -223,8 +223,8 @@ rollback_clone:
   script: echo "Reverting back as there's a failure."
   when: on_failure
   needs: 
-    - test_job
-    - uat_deploy
-    - prod_deploy
+    - test
+    - deploy
+    - deploy
   only:
     refs: [main]
