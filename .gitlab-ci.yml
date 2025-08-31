@@ -149,6 +149,7 @@ test_job:
     pg_restore -h db -U "$POSTGRES_USER" -d "$DBNAME" --no-owner --clean --if-exists clone.dump
   script:
     - echo "Database $DBNAME restored successfully from dump."
+    - exit 1
   artifacts:
     paths: [test_log.txt]
     expire_in: 1 week
