@@ -279,13 +279,6 @@ rollback_clone:
     # Add rollback SQL or restore commands here if needed
     - echo "Rollback/cleanup completed."
   when: on_failure
-  needs:
-    - job: test_job
-      optional: true
-    - job: deploy_uat
-      optional: true
-    - job: deploy_prod
-      optional: true
   only:
     refs: [main]
     
