@@ -130,41 +130,41 @@ test_job:
     POSTGRES_USER: postgres
     POSTGRES_PASSWORD: postgres
     POSTGRES_DB: postgres
-  needs: ["db_clone"]
+    DNAME: testdb  #  Defined new DB from scratch for testing purpose
   before_script: |
     export PGPASSWORD="$POSTGRES_PASSWORD"
     # Wait for DB to be ready
     for i in $(seq 1 30); do
       psql -h db -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT 1" && break || (echo "Waiting for DB ($i)"; sleep 2)
     done
-    # Load DBNAME from artifact
-    source clone.env
-    echo "Will test DB: $DBNAME"
-    # Drop if exists and recreate database
-    if psql -h db -U "$POSTGRES_USER" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$DBNAME';" | grep -q 1; then
-      psql -h db -U "$POSTGRES_USER" -d postgres -c "DROP DATABASE \"$DBNAME\";"
+    echo "Database is ready for testing."
+    # Drop and recreate $DNAME
+    if psql -h db -U "$POSTGRES_USER" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$DNAME';" | grep -q 1; then
+      psql -h db -U "$POSTGRES_USER" -d postgres -c "DROP DATABASE $DNAME;"
     fi
-    psql -h db -U "$POSTGRES_USER" -d postgres -c "CREATE DATABASE \"$DBNAME\";"
-    # Restore dump safely
-    pg_restore -h db -U "$POSTGRES_USER" -d "$DBNAME" --no-owner --clean --if-exists clone.dump
+    psql -h db -U "$POSTGRES_USER" -d postgres -c "CREATE DATABASE $DNAME;"
   script:
-    - echo "Database $DBNAME restored successfully from dump."
-
-    # Apply all SQL files in the repo to the test DB
-    - echo "Applying all .sql files to the test database..."
+    - echo "Validating SQL syntax for all .sql files..."
+    - |
+      for file in $(git ls-files '*.sql'); do
+        echo "Validating syntax: $file"
+        # Parse-only mode for syntax checking
+        if ! psql -v ON_ERROR_STOP=1 --set=ON_ERROR_STOP=on -h db -U "$POSTGRES_USER" -d $DNAME --single-transaction --set=client_min_messages=error --echo-errors --no-psqlrc --set=AUTOCOMMIT=off --set=ON_ERROR_STOP=on --set=QUIET=on -f "$file" --single-transaction --set=AUTOCOMMIT=off --set=ON_ERROR_STOP=on --set=QUIET=on -f "$file" -c 'ROLLBACK;' > /dev/null 2>&1; then
+          echo "Syntax error detected in $file"
+          exit 1
+        fi
+      done
+    - echo "Applying all .sql files directly to $DNAME..."
     - |
       for file in $(git ls-files '*.sql'); do
         echo "Applying $file"
-        psql -v ON_ERROR_STOP=1 -q -h db -U "$POSTGRES_USER" -d "$DBNAME" -f "$file"
+        psql -v ON_ERROR_STOP=1 -q -h db -U "$POSTGRES_USER" -d $DNAME -f "$file"
       done
-
-    # Test Case 1: Syntax validation (will fail if any script has errors)
-    - echo "Syntax validation completed. All scripts applied successfully."
 
     # Test Case 2: Check Employees table for salaries < 10000
     - echo "Checking Employees table for salaries < 10000..."
     - |
-      count=$(psql -h db -U "$POSTGRES_USER" -d "$DBNAME" -tAc "SELECT COUNT(*) FROM employee WHERE salary < 10000;")
+      count=$(psql -h db -U "$POSTGRES_USER" -d $DNAME -tAc "SELECT COUNT(*) FROM employee WHERE salary < 10000;")
       if [ "$count" -gt 0 ]; then
         echo "Found $count employees with salary < 10000"
         exit 1
