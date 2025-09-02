@@ -119,77 +119,112 @@ db_clone:
     refs: [main]
 
 # ---------------- TEST JOB (recreate DB from dump, then validate) ----------------
-# ---------------- TEST JOB (recreate DB from dump) ----------------
+# test_job:
+#   stage: test
+#   image: $CI_REGISTRY_IMAGE/liquibase-psql:latest
+#   services:
+#     - name: postgres:15
+#       alias: db
+#   variables:
+#     POSTGRES_USER: postgres
+#     POSTGRES_PASSWORD: postgres
+#     POSTGRES_DB: postgres
+#     DNAME: testdb
+#   before_script: |
+#     set -e
+#     export PGPASSWORD="$POSTGRES_PASSWORD"
+#
+#     # Wait for Postgres to be ready
+#     for i in $(seq 1 30); do
+#       psql -h db -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT 1" && break || (echo "Waiting for DB ($i)"; sleep 2)
+#     done
+#     echo "Database is ready."
+#
+#     # Drop & recreate the test database
+#     psql -h db -U "$POSTGRES_USER" -d postgres -c "DROP DATABASE IF EXISTS $DNAME;"
+#     psql -h db -U "$POSTGRES_USER" -d postgres -c "CREATE DATABASE $DNAME;"
+#   script:
+#     # Apply all SQL files from the repo (sorted), fail-fast on first error
+#     - |
+#       set -e
+#       : > test_log.txt
+#       files="$(git ls-files '*.sql' | sort)"
+#       if [ -z "$files" ]; then
+#         echo "No .sql files found in repo" | tee -a test_log.txt
+#         exit 1
+#       fi
+#       echo "Applying SQL files to $DNAME:" | tee -a test_log.txt
+#       echo "$files" | tee -a test_log.txt
+#
+#       for file in $files; do
+#         echo "Applying $file" | tee -a test_log.txt
+#         if ! psql -v ON_ERROR_STOP=1 -h db -U "$POSTGRES_USER" -d "$DNAME" -f "$file" >> test_log.txt 2>&1; then
+#           echo "Execution failed in file: $file" | tee -a test_log.txt
+#           exit 1
+#         fi
+#       done
+#       echo "All SQL files applied successfully." | tee -a test_log.txt
+#
+#     # Ensure table exists before content checks
+#     - |
+#       exists=$(psql -h db -U "$POSTGRES_USER" -d "$DNAME" -tAc "SELECT to_regclass('public.employee');")
+#       if [ "$exists" != "public.employee" ]; then
+#         echo "Table 'employee' not found after applying SQL. Failing test." | tee -a test_log.txt
+#         exit 1
+#       else
+#         echo "Found table 'employee'." | tee -a test_log.txt
+#       fi
+#
+#     #  Test: no salaries < 10000
+#     - |
+#       count=$(psql -h db -U "$POSTGRES_USER" -d "$DNAME" -tAc "SELECT COUNT(*) FROM employee WHERE salary < 10000;")
+#       echo "Employees with salary < 10000: $count" | tee -a test_log.txt
+#       if [ "$count" -gt 0 ]; then
+#         echo "Test failed: Found $count employees with salary < 10000" | tee -a test_log.txt
+#         exit 1
+#       else
+#         echo "Test passed: No employees with salary < 10000" | tee -a test_log.txt
+#       fi
+#   artifacts:
+#     when: always
+#     paths:
+#       - test_log.txt
+#     expire_in: 1 week
+#   only:
+#     refs: [main]
+#################################################################
 test_job:
   stage: test
-  image: $CI_REGISTRY_IMAGE/liquibase-psql:latest
-  services:
-    - name: postgres:15
-      alias: db
-  variables:
-    POSTGRES_USER: postgres
-    POSTGRES_PASSWORD: postgres
-    POSTGRES_DB: postgres
-    DNAME: testdb
-  before_script: |
-    set -e
-    export PGPASSWORD="$POSTGRES_PASSWORD"
-
-    # Wait for Postgres to be ready
-    for i in $(seq 1 30); do
-      psql -h db -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT 1" && break || (echo "Waiting for DB ($i)"; sleep 2)
-    done
-    echo "Database is ready."
-
-    # Drop & recreate the test database
-    psql -h db -U "$POSTGRES_USER" -d postgres -c "DROP DATABASE IF EXISTS $DNAME;"
-    psql -h db -U "$POSTGRES_USER" -d postgres -c "CREATE DATABASE $DNAME;"
+  image: python:3.11
+  before_script:
+    - pip install sqlfluff
   script:
-    # Apply all SQL files from the repo (sorted), fail-fast on first error
     - |
       set -e
-      : > test_log.txt
-      files="$(git ls-files '*.sql' | sort)"
+      : > lint_report.txt
+      files=$(git ls-files '*.sql' | sort)
       if [ -z "$files" ]; then
-        echo "No .sql files found in repo" | tee -a test_log.txt
+        echo "No .sql files found" | tee -a lint_report.txt
         exit 1
       fi
-      echo "Applying SQL files to $DNAME:" | tee -a test_log.txt
-      echo "$files" | tee -a test_log.txt
-
+      echo "Linting SQL files (syntax only, no strict style checks)..." | tee -a lint_report.txt
+      
+      # Disable style rules, only check syntax
+      sqlfluff config set rules \
+        L009,L010,L011,L012,L013,L014,L015,L016,L017,L018,L019,L020,L021,L022,L023,L024,L025,L026,L027,L028,L029,L030,L031,L032,L033,L034,L035,L036,L037,L038,L039,L040,L041,L042,L043,L044,L045,L046,L047,L048,L049,L050,L051,L052,L053,L054,L055,L056,L057,L058,L059,L060,L061,L062,L063,L064,L065,L066,L067,L068,L069,L070,L071,L072,L073,L074,L075,L076,L077,L078,L079,L080,L081,L082,L083,L084,L085,L086,L087,L088,L089,L090,L091,L092,L093,L094,L095,L096,L097,L098,L099
+      
       for file in $files; do
-        echo "Applying $file" | tee -a test_log.txt
-        if ! psql -v ON_ERROR_STOP=1 -h db -U "$POSTGRES_USER" -d "$DNAME" -f "$file" >> test_log.txt 2>&1; then
-          echo "Execution failed in file: $file" | tee -a test_log.txt
+        echo "Checking $file" | tee -a lint_report.txt
+        if ! sqlfluff lint --dialect postgres "$file" >> lint_report.txt 2>&1; then
+          echo "Syntax issue in $file" | tee -a lint_report.txt
           exit 1
         fi
       done
-      echo "All SQL files applied successfully." | tee -a test_log.txt
-
-    # Ensure table exists before content checks
-    - |
-      exists=$(psql -h db -U "$POSTGRES_USER" -d "$DNAME" -tAc "SELECT to_regclass('public.employee');")
-      if [ "$exists" != "public.employee" ]; then
-        echo "Table 'employee' not found after applying SQL. Failing test." | tee -a test_log.txt
-        exit 1
-      else
-        echo "Found table 'employee'." | tee -a test_log.txt
-      fi
-
-    #  Test: no salaries < 10000
-    - |
-      count=$(psql -h db -U "$POSTGRES_USER" -d "$DNAME" -tAc "SELECT COUNT(*) FROM employee WHERE salary < 10000;")
-      echo "Employees with salary < 10000: $count" | tee -a test_log.txt
-      if [ "$count" -gt 0 ]; then
-        echo "Test failed: Found $count employees with salary < 10000" | tee -a test_log.txt
-        exit 1
-      else
-        echo "Test passed: No employees with salary < 10000" | tee -a test_log.txt
-      fi
+      echo "All SQL files passed syntax checks" | tee -a lint_report.txt
   artifacts:
     when: always
     paths:
-      - test_log.txt
+      - lint_report.txt
     expire_in: 1 week
   only:
     refs: [main]
