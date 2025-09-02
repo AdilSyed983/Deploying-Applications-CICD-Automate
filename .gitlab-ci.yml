@@ -204,7 +204,9 @@ test_job:
         awk '{if($1<10000){print "Found salary < 10000: "$1; exit 1}}'; then
         echo "All salaries are above threshold limit"
       else
-        echo "Found Employees having sal less than 10000" && touch test_fail_employees && exit 1
+        echo "Fail: Employees.sql check failed"
+        touch test_fail_employees
+        
       fi
 
     - echo "Checking Department.sql for duplicate DEPT_ID"
@@ -212,14 +214,22 @@ test_job:
       if grep -i "insert" Department.sql | \
         awk -F'[(), ]+' '{for(i=1;i<=NF;i++) if(tolower($i)=="values"){print $(i+1)}}' | \
         sort | uniq -d | grep .; then
-        echo "Duplicate DEPT_ID found" && touch test_fail_department && exit 1
+        echo "Duplicate DEPT_ID found"
+        touch test_fail_department
       else
         echo "No duplicates"
+      fi
+
+    # Explicitly fail if we created failure markers
+    - |
+      if [ -f test_fail_employees ] || [ -f test_fail_department ]; then
+        exit 1
       fi
   artifacts:
     paths:
       - test_fail_employees
       - test_fail_department
+    when: always   
     expire_in: 48 hours
   only:
     refs: [main]
