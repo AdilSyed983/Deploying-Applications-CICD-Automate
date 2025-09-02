@@ -291,8 +291,6 @@ rollback_clone:
   image: alpine:latest
   before_script:
     - apk add --no-cache git
-    - git config --global user.email "ci-bot@example.com"
-    - git config --global user.name "CI Bot"
   script:
     - echo "=== Starting rollback with Git ==="
     - |
@@ -300,10 +298,12 @@ rollback_clone:
         echo "Restoring files from last commit..."
         git fetch origin
         git reset --hard HEAD
-        echo "Files are now reverted to the last committed state."
+        echo "Files reverted to last committed state."
       else
         echo "No rollback needed, tests passed."
       fi
   when: on_failure
+  dependencies:
+    - test_job
   only:
     refs: [main]
