@@ -199,24 +199,40 @@ test_job:
   before_script:
     - pip install sqlfluff
   script:
-    # Use correct file name (case-sensitive)
-    - FILE="Employees.sql"
-    - echo "Running SQLFluff on $FILE"
-    - sqlfluff lint "$FILE" --dialect postgres || true
+    # List of SQL files to check
+    - FILES=("Employees.sql" "Department.sql")
 
-    # Manual check: Fail if salary < 10000
-    - echo "Checking if $FILE inserts salaries < 10000"
     - |
-      if grep -E -i "salary[^0-9]*[<]|salary[^0-9]*[0-9]{1,4}" "$FILE"; then
-        echo "Found potential salary values < 10000 in $FILE"
-        exit 1
-      else
-        echo "No salary < 10000 detected"
-      fi
+      for FILE in "${FILES[@]}"; do
+        echo "Running SQLFluff on $FILE"
+        sqlfluff lint "$FILE" --dialect postgres || true
+
+        if [[ "$FILE" == "Employees.sql" ]]; then
+          echo "Checking if $FILE inserts salaries < 10000"
+          if grep -E -i "salary[^0-9]*[<]|salary[^0-9]*[0-9]{1,4}" "$FILE"; then
+            echo "Found potential salary values < 10000 in $FILE"
+            exit 1
+          else
+            echo "No salary < 10000 detected in $FILE"
+          fi
+        fi
+
+        if [[ "$FILE" == "Department.sql" ]]; then
+          echo "Checking for duplicate DEPT_ID in $FILE"
+          DUPLICATES=$(grep -E -i "INSERT.*DEPARTMENT" "$FILE" | grep -oE "[0-9]+" | sort | uniq -d)
+          if [[ -n "$DUPLICATES" ]]; then
+            echo "Duplicate DEPT_ID values found in $FILE: $DUPLICATES"
+            exit 1
+          else
+            echo "No duplicate DEPT_ID found in $FILE"
+          fi
+        fi
+      done
   artifacts:
     when: always
     paths:
       - Employees.sql
+      - Department.sql
     expire_in: 1 week
   only:
     refs: [main]
