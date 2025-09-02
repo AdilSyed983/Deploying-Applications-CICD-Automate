@@ -200,11 +200,11 @@ test_job:
     - echo "Checking Employees.sql for salary < 10000"
     - |
       if grep -i "insert" Employees.sql | \
-        awk -F'[(), ]+' '{for(i=1;i<=NF;i++) if(tolower($i)=="values"){print $(i+3)}}' | \
+        awk -F'[(), ]+' '{for(i=1;i<=NF;i++) if(tolower($i)=="values"){print $(i+4)}}' | \
         awk '{if($1<10000){print "Found salary < 10000: "$1; exit 1}}'; then
-        echo "All salaries OK"
+        echo "All salaries are above threshold limit"
       else
-        exit 1
+        echo "Fail: Employees.sql check failed" && touch test_fail_employees && exit 1
       fi
 
     - echo "Checking Department.sql for duplicate DEPT_ID"
@@ -212,16 +212,14 @@ test_job:
       if grep -i "insert" Department.sql | \
         awk -F'[(), ]+' '{for(i=1;i<=NF;i++) if(tolower($i)=="values"){print $(i+1)}}' | \
         sort | uniq -d | grep .; then
-        echo "Duplicate DEPT_ID found"
-        exit 1
+        echo "Duplicate DEPT_ID found" && touch test_fail_department && exit 1
       else
         echo "No duplicates"
       fi
-
   artifacts:
     paths:
-      - Employees.sql
-      - Department.sql
+      - test_fail_employees
+      - test_fail_department
     expire_in: 48 hours
   only:
     refs: [main]
@@ -256,28 +254,6 @@ deploy_uat:
     name: uat
   only:
     refs: [main]
-  after_script:
-    - |
-      set -e
-      apk add --no-cache msmtp mailx >/dev/null 2>&1 || true
-      cat > ~/.msmtprc <<EOF
-      account default
-      host smtp.gmail.com
-      port 587
-      auth on
-      user fyjaan983@gmail.com
-      password $SMTP_PASSWORD
-      from fyjaan983@gmail.com
-      tls on
-      tls_starttls on
-      EOF
-      chmod 600 ~/.msmtprc || true
-      if [ "$CI_JOB_STATUS" = "success" ]; then
-        printf "UAT deployment succeeded for commit %s on %s\nLogs: %s\n" "$CI_COMMIT_SHORT_SHA" "$CI_COMMIT_REF_NAME" "$CI_JOB_URL" | mail -s "GitLab Pipeline Success (UAT)" fyjaan983@gmail.com || true
-      else
-        printf "UAT deployment FAILED for commit %s on %s\nLogs: %s\n" "$CI_COMMIT_SHORT_SHA" "$CI_COMMIT_REF_NAME" "$CI_JOB_URL" | mail -s "GitLab Pipeline FAILED (UAT)" fyjaan983@gmail.com || true
-      fi
-
 # ---------------- DEPLOY TO PROD (simulated) ----------------
 deploy_prod:
   stage: deploy
@@ -309,46 +285,25 @@ deploy_prod:
     name: production
   only:
     refs: [main]
-  after_script:
-    - |
-      set -e
-      apk add --no-cache msmtp mailx >/dev/null 2>&1 || true
-      cat > ~/.msmtprc <<EOF
-      account default
-      host smtp.gmail.com
-      port 587
-      auth on
-      user fyjaan983@gmail.com
-      password $SMTP_PASSWORD
-      from fyjaan983@gmail.com
-      tls on
-      tls_starttls on
-      EOF
-      chmod 600 ~/.msmtprc || true
-      if [ "$CI_JOB_STATUS" = "success" ]; then
-        printf "PROD deployment succeeded for commit %s on %s\nLogs: %s\n" "$CI_COMMIT_SHORT_SHA" "$CI_COMMIT_REF_NAME" "$CI_JOB_URL" | mail -s "GitLab Pipeline Success (PROD)" fyjaan983@gmail.com || true
-      else
-        printf "PROD deployment FAILED for commit %s on %s\nLogs: %s\n" "$CI_COMMIT_SHORT_SHA" "$CI_COMMIT_REF_NAME" "$CI_JOB_URL" | mail -s "GitLab Pipeline FAILED (PROD)" fyjaan983@gmail.com || true
-      fi
-
 # ---------------- CLEANUP (mostly no-op; services are ephemeral) ----------------
 rollback_clone:
   stage: cleanup
-  image: postgres:15
-  services:
-    - name: postgres:15
-      alias: db
-  variables:
-    POSTGRES_USER: postgres
-    POSTGRES_PASSWORD: postgres
-    POSTGRES_DB: postgres
+  image: alpine:latest
   before_script:
-    - export PGPASSWORD="$POSTGRES_PASSWORD"
+    - apk add --no-cache git
+    - git config --global user.email "ci-bot@example.com"
+    - git config --global user.name "CI Bot"
   script:
-    - echo "Running rollback cleanup because a stage failed..."
-    # Add rollback SQL or restore commands here if needed
-    - echo "Rollback/cleanup completed."
+    - echo "=== Starting rollback with Git ==="
+    - |
+      if [ -f test_fail_employees ] || [ -f test_fail_department ]; then
+        echo "Restoring files from last commit..."
+        git fetch origin
+        git reset --hard HEAD
+        echo "Files are now reverted to the last committed state."
+      else
+        echo "No rollback needed, tests passed."
+      fi
   when: on_failure
   only:
     refs: [main]
-    
