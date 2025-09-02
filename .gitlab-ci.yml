@@ -204,7 +204,7 @@ test_job:
         awk '{if($1<10000){print "Found salary < 10000: "$1; exit 1}}'; then
         echo "All salaries are above threshold limit"
       else
-        echo "Fail: Employees.sql check failed" && touch test_fail_employees && exit 1
+        echo "Found Employees having sal less than 10000" && touch test_fail_employees && exit 1
       fi
 
     - echo "Checking Department.sql for duplicate DEPT_ID"
@@ -291,19 +291,25 @@ rollback_clone:
   image: alpine:latest
   before_script:
     - apk add --no-cache git
+    - git config --global user.name "CI Rollback Bot"
+    - git config --global user.email "ci-rollback@example.com"
   script:
     - echo "=== Starting rollback with Git ==="
     - |
       if [ -f test_fail_employees ] || [ -f test_fail_department ]; then
-        echo "Restoring files from last commit..."
+        echo "Restoring files to last commit..."
         git fetch origin
-        git reset --hard HEAD
-        echo "Files reverted to last committed state."
+        git reset --hard origin/main
+        echo "Creating rollback commit..."
+        git commit --allow-empty -m "CI rollback: Reverted files due to failed tests"
+        git push origin HEAD:main
+        echo "Rollback pushed to main."
       else
         echo "No rollback needed, tests passed."
       fi
+  needs:
+    - job: test_job
+      artifacts: true
   when: on_failure
-  dependencies:
-    - test_job
   only:
     refs: [main]
