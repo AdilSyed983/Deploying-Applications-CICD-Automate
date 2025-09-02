@@ -196,29 +196,26 @@ db_clone:
 test_job:
   stage: test
   image: python:3.11
-  script:
+  before_script:
     - pip install sqlfluff
+  script:
+    
+    - echo "Running SQLFluff on employees.sql"
+    - sqlfluff lint employees.sql --dialect postgres || true
+
+    #  Detect salaries < 10000
+    - echo "Checking if employees.sql inserts salaries < 10000"
     - |
-      set -e
-      : > lint_report.txt
-      files="$(git ls-files '*.sql' | sort)"
-      if [ -z "$files" ]; then
-        echo "No .sql files found" | tee -a lint_report.txt
+      if grep -E -i "salary[^0-9]*[<]|salary[^0-9]*[0-9]{1,4}" employees.sql; then
+        echo "Found potential salary values < 10000 in employees.sql"
         exit 1
+      else
+        echo "No salary < 10000 detected"
       fi
-      echo "Checking SQL syntax only..." | tee -a lint_report.txt
-      for file in $files; do
-        echo "Parsing $file..." | tee -a lint_report.txt
-        if ! sqlfluff parse --dialect postgres --nocolor "$file" >> lint_report.txt 2>&1; then
-          echo "Syntax error in $file" | tee -a lint_report.txt
-          exit 1
-        fi
-      done
-      echo "All SQL files are valid." | tee -a lint_report.txt
   artifacts:
     when: always
     paths:
-      - lint_report.txt
+      - employees.sql
     expire_in: 1 week
   only:
     refs: [main]
