@@ -150,18 +150,21 @@ test_job:
   script:
     - echo "Database $DBNAME restored successfully from dump."
 
-    # Test Case 1: Syntax validation for all SQL files
-    - echo "Running syntax validation on SQL files..."
+    # Apply all SQL files in the repo to the test DB
+    - echo "Applying all .sql files to the test database..."
     - |
       for file in $(git ls-files '*.sql'); do
-        echo "Checking syntax in $file"
+        echo "Applying $file"
         psql -v ON_ERROR_STOP=1 -q -h db -U "$POSTGRES_USER" -d "$DBNAME" -f "$file"
       done
 
-    # Test Case 2: Check Employees.sql data for salaries < 10000
+    # Test Case 1: Syntax validation (will fail if any script has errors)
+    - echo "Syntax validation completed. All scripts applied successfully."
+
+    # Test Case 2: Check Employees table for salaries < 10000
     - echo "Checking Employees table for salaries < 10000..."
     - |
-      count=$(psql -h db -U "$POSTGRES_USER" -d "$DBNAME" -tAc "SELECT COUNT(*) FROM EMPLOYEE WHERE salary < 10000;")
+      count=$(psql -h db -U "$POSTGRES_USER" -d "$DBNAME" -tAc "SELECT COUNT(*) FROM employees WHERE salary < 10000;")
       if [ "$count" -gt 0 ]; then
         echo "Found $count employees with salary < 10000"
         exit 1
