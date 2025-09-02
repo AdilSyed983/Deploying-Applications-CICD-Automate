@@ -130,49 +130,66 @@ test_job:
     POSTGRES_USER: postgres
     POSTGRES_PASSWORD: postgres
     POSTGRES_DB: postgres
-    DNAME: testdb  #  Defined new DB from scratch for testing purpose
+    DNAME: testdb
   before_script: |
+    set -e
     export PGPASSWORD="$POSTGRES_PASSWORD"
-    # Wait for DB to be ready
+
+    # Wait for Postgres to be ready
     for i in $(seq 1 30); do
       psql -h db -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT 1" && break || (echo "Waiting for DB ($i)"; sleep 2)
     done
-    echo "Database is ready for testing."
-    # Drop and recreate $DNAME
-    if psql -h db -U "$POSTGRES_USER" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$DNAME';" | grep -q 1; then
-      psql -h db -U "$POSTGRES_USER" -d postgres -c "DROP DATABASE $DNAME;"
-    fi
+    echo "Database is ready."
+
+    # Drop & recreate the test database
+    psql -h db -U "$POSTGRES_USER" -d postgres -c "DROP DATABASE IF EXISTS $DNAME;"
     psql -h db -U "$POSTGRES_USER" -d postgres -c "CREATE DATABASE $DNAME;"
   script:
-    - echo "Validating SQL syntax for all .sql files..."
+    # Apply all SQL files from the repo (sorted), fail-fast on first error
     - |
-      for file in $(git ls-files '*.sql'); do
-        echo "Validating syntax: $file"
-        # Parse-only mode for syntax checking
-        if ! psql -v ON_ERROR_STOP=1 --set=ON_ERROR_STOP=on -h db -U "$POSTGRES_USER" -d $DNAME --single-transaction --set=client_min_messages=error --echo-errors --no-psqlrc --set=AUTOCOMMIT=off --set=ON_ERROR_STOP=on --set=QUIET=on -f "$file" --single-transaction --set=AUTOCOMMIT=off --set=ON_ERROR_STOP=on --set=QUIET=on -f "$file" -c 'ROLLBACK;' > /dev/null 2>&1; then
-          echo "Syntax error detected in $file"
+      set -e
+      : > test_log.txt
+      files="$(git ls-files '*.sql' | sort)"
+      if [ -z "$files" ]; then
+        echo "No .sql files found in repo" | tee -a test_log.txt
+        exit 1
+      fi
+      echo "Applying SQL files to $DNAME:" | tee -a test_log.txt
+      echo "$files" | tee -a test_log.txt
+
+      for file in $files; do
+        echo "Applying $file" | tee -a test_log.txt
+        if ! psql -v ON_ERROR_STOP=1 -h db -U "$POSTGRES_USER" -d "$DNAME" -f "$file" >> test_log.txt 2>&1; then
+          echo "Execution failed in file: $file" | tee -a test_log.txt
           exit 1
         fi
       done
-    - echo "Applying all .sql files directly to $DNAME..."
-    - |
-      for file in $(git ls-files '*.sql'); do
-        echo "Applying $file"
-        psql -v ON_ERROR_STOP=1 -q -h db -U "$POSTGRES_USER" -d $DNAME -f "$file"
-      done
+      echo "All SQL files applied successfully." | tee -a test_log.txt
 
-    # Test Case 2: Check Employees table for salaries < 10000
-    - echo "Checking Employees table for salaries < 10000..."
+    # Ensure table exists before content checks
     - |
-      count=$(psql -h db -U "$POSTGRES_USER" -d $DNAME -tAc "SELECT COUNT(*) FROM employee WHERE salary < 10000;")
-      if [ "$count" -gt 0 ]; then
-        echo "Found $count employees with salary < 10000"
+      exists=$(psql -h db -U "$POSTGRES_USER" -d "$DNAME" -tAc "SELECT to_regclass('public.employee');")
+      if [ "$exists" != "public.employee" ]; then
+        echo "Table 'employee' not found after applying SQL. Failing test." | tee -a test_log.txt
         exit 1
       else
-        echo "No employees found with salary < 10000"
+        echo "Found table 'employee'." | tee -a test_log.txt
+      fi
+
+    #  Test: no salaries < 10000
+    - |
+      count=$(psql -h db -U "$POSTGRES_USER" -d "$DNAME" -tAc "SELECT COUNT(*) FROM employee WHERE salary < 10000;")
+      echo "Employees with salary < 10000: $count" | tee -a test_log.txt
+      if [ "$count" -gt 0 ]; then
+        echo "Test failed: Found $count employees with salary < 10000" | tee -a test_log.txt
+        exit 1
+      else
+        echo "Test passed: No employees with salary < 10000" | tee -a test_log.txt
       fi
   artifacts:
-    paths: [test_log.txt]
+    when: always
+    paths:
+      - test_log.txt
     expire_in: 1 week
   only:
     refs: [main]
