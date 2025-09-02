@@ -149,7 +149,25 @@ test_job:
     pg_restore -h db -U "$POSTGRES_USER" -d "$DBNAME" --no-owner --clean --if-exists clone.dump
   script:
     - echo "Database $DBNAME restored successfully from dump."
-    #- exit 1
+
+    # Test Case 1: Syntax validation for all SQL files
+    - echo "Running syntax validation on SQL files..."
+    - |
+      for file in $(git ls-files '*.sql'); do
+        echo "Checking syntax in $file"
+        psql -v ON_ERROR_STOP=1 -q -h db -U "$POSTGRES_USER" -d "$DBNAME" -f "$file"
+      done
+
+    # Test Case 2: Check Employees.sql data for salaries < 10000
+    - echo "Checking Employees table for salaries < 10000..."
+    - |
+      count=$(psql -h db -U "$POSTGRES_USER" -d "$DBNAME" -tAc "SELECT COUNT(*) FROM EMPLOYEE WHERE salary < 10000;")
+      if [ "$count" -gt 0 ]; then
+        echo "Found $count employees with salary < 10000"
+        exit 1
+      else
+        echo "No employees found with salary < 10000"
+      fi
   artifacts:
     paths: [test_log.txt]
     expire_in: 1 week
@@ -203,9 +221,9 @@ deploy_uat:
       EOF
       chmod 600 ~/.msmtprc || true
       if [ "$CI_JOB_STATUS" = "success" ]; then
-        printf "✅ UAT deployment succeeded for commit %s on %s\nLogs: %s\n" "$CI_COMMIT_SHORT_SHA" "$CI_COMMIT_REF_NAME" "$CI_JOB_URL" | mail -s "GitLab Pipeline Success (UAT)" fyjaan983@gmail.com || true
+        printf "UAT deployment succeeded for commit %s on %s\nLogs: %s\n" "$CI_COMMIT_SHORT_SHA" "$CI_COMMIT_REF_NAME" "$CI_JOB_URL" | mail -s "GitLab Pipeline Success (UAT)" fyjaan983@gmail.com || true
       else
-        printf "❌ UAT deployment FAILED for commit %s on %s\nLogs: %s\n" "$CI_COMMIT_SHORT_SHA" "$CI_COMMIT_REF_NAME" "$CI_JOB_URL" | mail -s "GitLab Pipeline FAILED (UAT)" fyjaan983@gmail.com || true
+        printf "UAT deployment FAILED for commit %s on %s\nLogs: %s\n" "$CI_COMMIT_SHORT_SHA" "$CI_COMMIT_REF_NAME" "$CI_JOB_URL" | mail -s "GitLab Pipeline FAILED (UAT)" fyjaan983@gmail.com || true
       fi
 
 # ---------------- DEPLOY TO PROD (simulated) ----------------
@@ -256,9 +274,9 @@ deploy_prod:
       EOF
       chmod 600 ~/.msmtprc || true
       if [ "$CI_JOB_STATUS" = "success" ]; then
-        printf "✅ PROD deployment succeeded for commit %s on %s\nLogs: %s\n" "$CI_COMMIT_SHORT_SHA" "$CI_COMMIT_REF_NAME" "$CI_JOB_URL" | mail -s "GitLab Pipeline Success (PROD)" fyjaan983@gmail.com || true
+        printf "PROD deployment succeeded for commit %s on %s\nLogs: %s\n" "$CI_COMMIT_SHORT_SHA" "$CI_COMMIT_REF_NAME" "$CI_JOB_URL" | mail -s "GitLab Pipeline Success (PROD)" fyjaan983@gmail.com || true
       else
-        printf "❌ PROD deployment FAILED for commit %s on %s\nLogs: %s\n" "$CI_COMMIT_SHORT_SHA" "$CI_COMMIT_REF_NAME" "$CI_JOB_URL" | mail -s "GitLab Pipeline FAILED (PROD)" fyjaan983@gmail.com || true
+        printf "PROD deployment FAILED for commit %s on %s\nLogs: %s\n" "$CI_COMMIT_SHORT_SHA" "$CI_COMMIT_REF_NAME" "$CI_JOB_URL" | mail -s "GitLab Pipeline FAILED (PROD)" fyjaan983@gmail.com || true
       fi
 
 # ---------------- CLEANUP (mostly no-op; services are ephemeral) ----------------
