@@ -164,7 +164,7 @@ test_job:
     # Test Case 2: Check Employees table for salaries < 10000
     - echo "Checking Employees table for salaries < 10000..."
     - |
-      count=$(psql -h db -U "$POSTGRES_USER" -d "$DBNAME" -tAc "SELECT COUNT(*) FROM employees WHERE salary < 10000;")
+      count=$(psql -h db -U "$POSTGRES_USER" -d "$DBNAME" -tAc "SELECT COUNT(*) FROM employee WHERE salary < 10000;")
       if [ "$count" -gt 0 ]; then
         echo "Found $count employees with salary < 10000"
         exit 1
