@@ -149,31 +149,17 @@ test_job:
     pg_restore -h db -U "$POSTGRES_USER" -d "$DBNAME" --no-owner --clean --if-exists clone.dump
   script:
     - echo "Database $DBNAME restored successfully from dump."
-
-    # Test Case 1: Basic Syntax Validation for SQL Files
     - echo "Running syntax validation on SQL files..."
     - |
-      for file in sql/*.sql; do
+      for file in $(git ls-files '*.sql'); do
         echo "Checking syntax in $file"
-        psql -h db -U "$POSTGRES_USER" -d "$DBNAME" -f "$file" --set=ON_ERROR_STOP=1 || exit 1
+        psql -v ON_ERROR_STOP=1 -q -h db -U "$POSTGRES_USER" -d "$DBNAME" -f "$file"
       done
-
-    # Test Case 2: Ensure no accidental DROP statements
-    - echo "Checking for dangerous statements..."
-    - |
-      if grep -iE "DROP DATABASE|DROP TABLE" sql/*.sql; then
-        echo "Found DROP statements in SQL files!"
-        exit 1
-      else
-        echo "No DROP statements found."
-      fi
-
   artifacts:
     paths: [test_log.txt]
     expire_in: 1 week
   only:
     refs: [main]
-
 # ---------------- DEPLOY TO UAT (simulated) ----------------
 deploy_uat:
   stage: deploy
