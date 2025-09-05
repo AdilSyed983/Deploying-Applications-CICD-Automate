@@ -300,30 +300,50 @@ rollback_clone:
   stage: cleanup
   image: alpine:latest
   before_script:
+    # Install Git
     - apk add --no-cache git
+
+    # Configure Git identity for CI
     - git config --global user.name "fyjaan983"
     - git config --global user.email "fyjaan983@gmail.com"
-    - echo "Checking if GL_PAT is available..."
-    - if [ -z "$GL_PAT" ]; then echo "GL_PAT is missing!"; exit 1; fi
-    - echo "Trying GitLab auth..."
-    - git ls-remote https://oauth2:${GL_PAT}@gitlab.com/gitlab-cicd-automation/cicd-automation-for-apex.git || echo "Auth failed"
-    - git remote set-url origin https://oauth2:${GL_PAT}@gitlab.com/gitlab-cicd-automation/cicd-automation-for-apex.git
-  script:
-    - echo "=== Starting rollback with Git ==="
+
+    # Validate GL_PAT availability
     - |
+      if [ -z "$GL_PAT" ]; then
+        echo "ERROR: GL_PAT variable is missing!"
+        exit 1
+      fi
+
+    # Set correct remote URL (HTTPS + PAT)
+    - git remote set-url origin https://oauth2:${GL_PAT}@gitlab.com/gitlab-cicd-automation/cicd-automation-for-apex.git
+
+  script:
+    - echo "=== Starting rollback process ==="
+    - |
+      # Check for failure marker files
       if [ -f test_fail_employees ] || [ -f test_fail_department ]; then
-        echo "Restoring files to last commit..."
-        git fetch origin
+        echo "Tests failed, restoring to last good commit..."
+
+        # Fetch latest main and reset
+        git fetch origin main
         git checkout main
         git reset --hard origin/main
+
+        # Commit rollback marker to avoid confusion (skip triggering CI again)
         git commit --allow-empty -m "CI rollback: Reverted files due to failed tests [skip ci]"
+
+        # Push rollback
         git push origin HEAD:main
+
+        echo "Rollback completed and pushed to main."
       else
         echo "No rollback needed, tests passed."
       fi
+
   needs:
     - job: test_job
       artifacts: true
+
   when: on_failure
   only:
     refs: [main]
