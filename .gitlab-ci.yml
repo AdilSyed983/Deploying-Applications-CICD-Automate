@@ -303,6 +303,10 @@ rollback_clone:
     - apk add --no-cache git
     - git config --global user.name "fyjaan983"
     - git config --global user.email "fyjaan983@gmail.com"
+    - echo "Checking if GL_PAT is available..."
+    - if [ -z "$GL_PAT" ]; then echo "GL_PAT is missing!"; exit 1; fi
+    - echo "Trying GitLab auth..."
+    - git ls-remote https://oauth2:${GL_PAT}@gitlab.com/gitlab-cicd-automation/cicd-automation-for-apex.git || echo "Auth failed"
     - git remote set-url origin https://oauth2:${GL_PAT}@gitlab.com/gitlab-cicd-automation/cicd-automation-for-apex.git
   script:
     - echo "=== Starting rollback with Git ==="
