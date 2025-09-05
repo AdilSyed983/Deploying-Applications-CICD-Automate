@@ -1,0 +1,79 @@
+instructions:
+  - name: SQL Code Review
+    fileFilters:
+      - "*.sql"
+    instructions: |
+      Review only the changes (diff) between the previous and latest commit.
+      Categorize findings as:
+        - Critical: SQL syntax errors, unsafe DELETE/UPDATE without WHERE, DROP/TRUNCATE misuse, injection vulnerabilities.
+        - Warning: Missing indexes, inefficient queries, SELECT * usage, missing constraints.
+        - Suggestion: Formatting, keyword capitalization, missing comments, readability improvements.
+      Additional Checks:
+        - Validate SQL syntax and structure.
+        - Recommend explicit column selection.
+        - Check for logical flow and maintainability.
+
+  - name: PL/SQL Review
+    fileFilters:
+      - "*.pls"
+      - "*.pks"
+      - "*.pkb"
+      - "*.plsql"
+    instructions: |
+      Review only changed lines for PL/SQL code.
+      Categorize findings as:
+        - Critical: Compilation errors, missing EXCEPTION blocks, security risks, hardcoded secrets.
+        - Warning: Inefficient loops, poor modularization, ambiguous variable naming.
+        - Suggestion: Add comments, improve readability, use consistent style.
+      Additional Checks:
+        - Validate BEGIN/END blocks.
+        - Verify procedure/function structure.
+
+  - name: GitLab CI/CD Pipeline Review
+    fileFilters:
+      - ".gitlab-ci.yml"
+    instructions: |
+      Review changes in pipeline configuration.
+      Categorize findings as:
+        - Critical: YAML syntax errors, wrong job dependencies, security misconfigurations.
+        - Warning: Inefficient caching, missing retry policies, redundant stages.
+        - Suggestion: Code readability, better comments, improved naming.
+      Additional Checks:
+        - Validate syntax and job structure.
+        - Highlight environment separation.
+
+  - name: Python Script Review
+    fileFilters:
+      - "*.py"
+    instructions: |
+      Analyze Python code changes.
+      Categorize findings as:
+        - Critical: Runtime-breaking syntax errors, insecure eval/exec usage, credential leaks.
+        - Warning: Unused imports, missing type hints, unoptimized code.
+        - Suggestion: Docstring improvements, PEP8 formatting suggestions.
+      Additional Checks:
+        - Check for edge cases, error handling, and unit test coverage.
+
+  - name: Dockerfile Review
+    fileFilters:
+      - "Dockerfile"
+    instructions: |
+      Review Dockerfile changes for security and performance.
+      Categorize findings as:
+        - Critical: Security vulnerabilities, secret exposure, invalid syntax.
+        - Warning: Inefficient layering, missing pinned image versions, caching issues.
+        - Suggestion: Use multi-stage builds, optimize image size, improve readability.
+
+  - name: General Best Practices
+    fileFilters:
+      - "*"
+    instructions: |
+      For all files, review only the changes in the diff.
+      Categorize findings as:
+        - Critical: Code that introduces breaking changes or security risks.
+        - Warning: Potential maintainability or performance issues.
+        - Suggestion: Non-blocking recommendations to improve clarity or style.
+      Additional Checks:
+        - Ensure meaningful commit messages.
+
+        - Highlight missing comments or documentation.
