@@ -303,15 +303,16 @@ rollback_clone:
     - apk add --no-cache git
     - git config --global user.name "fyjaan983"
     - git config --global user.email "fyjaan983@gmail.com"
-    - git remote set-url origin https://oauth2:${GL_PAT}@gitlab.com/fyjaan983/CI-CD-Automation-Through-Jenkins.git
+    - git remote set-url origin https://oauth2:${GL_PAT}@gitlab.com/gitlab-cicd-automation/cicd-automation-for-apex.git
   script:
     - echo "=== Starting rollback with Git ==="
     - |
       if [ -f test_fail_employees ] || [ -f test_fail_department ]; then
         echo "Restoring files to last commit..."
         git fetch origin
+        git checkout main
         git reset --hard origin/main
-        git commit --allow-empty -m "CI rollback: Reverted files due to failed tests"
+        git commit --allow-empty -m "CI rollback: Reverted files due to failed tests [skip ci]"
         git push origin HEAD:main
       else
         echo "No rollback needed, tests passed."
