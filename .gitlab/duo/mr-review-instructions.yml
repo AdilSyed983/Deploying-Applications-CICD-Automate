@@ -5,7 +5,7 @@ instructions:
     instructions: |
       Review database scripts with a focus on safety and performance:
         - Critical: Invalid syntax, destructive DDL without safeguards (DROP/TRUNCATE), unsafe DELETE/UPDATE without WHERE.
-        - High: Missing primary/foreign keys, no rollback strategy in migration scripts.
+        - Warning: Missing primary/foreign keys, no rollback strategy in migration scripts.
         - Medium: Inefficient joins, no indexing for large tables, SELECT * usage.
         - Suggestion: Improve formatting, use consistent naming conventions, add comments.
       Additional Checks:
