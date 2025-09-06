@@ -52,6 +52,23 @@ build_job:
     expire_in: 1 week
   only:
     refs: [main]
+#-----------------------------------------------------------------------------  
+# Save a copy of the repo files after build
+save_good_state:
+  stage: build
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache rsync
+  script:
+    - echo "Saving current state of repository..."
+    - mkdir backup_state
+    - rsync -av --progress ./ ./backup_state --exclude backup_state
+  artifacts:
+    paths:
+      - backup_state/
+    expire_in: 1 week
+  only:
+    refs: [main]
 
 # ---------------- CREATE TEMP CLONE DB (dump as artifact) ----------------
 db_clone:
@@ -220,7 +237,7 @@ test_job:
         echo "No duplicates"
       fi
 
-    # Explicitly fail if we created failure markers
+  
     - |
       if [ -f test_fail_employees ] || [ -f test_fail_department ]; then
         exit 1
@@ -300,26 +317,32 @@ rollback_clone:
   stage: cleanup
   image: alpine:latest
   before_script:
-    - apk add --no-cache git
-    - git config --global user.name "fyjaan983"
-    - git config --global user.email "fyjaan983@gmail.com"
-    - git remote set-url origin https://oauth2:${GL_PAT}@gitlab.com/gitlab-cicd-automation/cicd-automation-for-apex.git
+     - apk add --no-cache rsync bash
   script:
-    - echo "=== Starting rollback with Git ==="
+    - echo "=== Starting rollback process (using artifacts) ==="
     - |
       if [ -f test_fail_employees ] || [ -f test_fail_department ]; then
-        echo "Restoring files to last commit..."
-        git fetch origin
-        git checkout main
-        git reset --hard origin/main
-        git commit --allow-empty -m "CI rollback: Reverted files due to failed tests [skip ci]"
-        git push origin HEAD:main
+        echo "Tests failed, restoring files from saved state..."
+        rsync -av --progress ./backup_state/ ./ --exclude backup_state
+        echo "Rollback completed (files restored locally)."
       else
         echo "No rollback needed, tests passed."
       fi
+  artifacts:
+    name: "rollback_result_$CI_PIPELINE_ID"
+    paths:
+      - .
+    exclude:
+      - backup_state/
+      - .git/
+    expire_in: 1 week
   needs:
+    - job: save_good_state
+      artifacts: true
     - job: test_job
       artifacts: true
   when: on_failure
   only:
     refs: [main]
+
+    
