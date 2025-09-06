@@ -1,79 +1,73 @@
 instructions:
-  - name: SQL Code Review
+  - name: SQL & Database Review
     fileFilters:
       - "*.sql"
     instructions: |
-      Review only the changes (diff) between the previous and latest commit.
-      Categorize findings as:
-        - Critical: SQL syntax errors, unsafe DELETE/UPDATE without WHERE, DROP/TRUNCATE misuse, injection vulnerabilities.
-        - Warning: Missing indexes, inefficient queries, SELECT * usage, missing constraints.
-        - Suggestion: Formatting, keyword capitalization, missing comments, readability improvements.
+      Review database scripts with a focus on safety and performance:
+        - Critical: Invalid syntax, destructive DDL without safeguards (DROP/TRUNCATE), unsafe DELETE/UPDATE without WHERE.
+        - High: Missing primary/foreign keys, no rollback strategy in migration scripts.
+        - Medium: Inefficient joins, no indexing for large tables, SELECT * usage.
+        - Suggestion: Improve formatting, use consistent naming conventions, add comments.
       Additional Checks:
-        - Validate SQL syntax and structure.
-        - Recommend explicit column selection.
-        - Check for logical flow and maintainability.
+        - Ensure transactions are used for multi-step operations.
+        - Verify data integrity and referential constraints.
+        - Check for idempotency (scripts can safely run multiple times).
 
-  - name: PL/SQL Review
+  - name: PL/SQL Code Review
     fileFilters:
       - "*.pls"
       - "*.pks"
       - "*.pkb"
       - "*.plsql"
     instructions: |
-      Review only changed lines for PL/SQL code.
-      Categorize findings as:
-        - Critical: Compilation errors, missing EXCEPTION blocks, security risks, hardcoded secrets.
-        - Warning: Inefficient loops, poor modularization, ambiguous variable naming.
-        - Suggestion: Add comments, improve readability, use consistent style.
+      Focus on maintainability, performance, and security:
+        - Critical: Compilation errors, SQL injection risk, missing exception handling.
+        - High: Hardcoded credentials, poor modularization, unhandled edge cases.
+        - Medium: Inefficient loops, lack of bulk operations, ambiguous variable names.
+        - Suggestion: Add documentation, improve readability.
       Additional Checks:
-        - Validate BEGIN/END blocks.
-        - Verify procedure/function structure.
+        - Validate BEGIN/END and transaction handling.
+        - Recommend explicit cursor management.
+        - Enforce coding standards (naming, structure).
 
-  - name: GitLab CI/CD Pipeline Review
+  - name: CI/CD Pipeline Review
     fileFilters:
       - ".gitlab-ci.yml"
+      - ".gitlab/ci/*.yml"
     instructions: |
-      Review changes in pipeline configuration.
-      Categorize findings as:
-        - Critical: YAML syntax errors, wrong job dependencies, security misconfigurations.
-        - Warning: Inefficient caching, missing retry policies, redundant stages.
-        - Suggestion: Code readability, better comments, improved naming.
+      Review pipeline definitions for safety, efficiency, and scalability:
+        - Critical: Invalid YAML syntax, credentials in plain text, incorrect deployment targets.
+        - High: Missing environment separation, no rollback or retry strategies.
+        - Medium: Inefficient caching, redundant jobs, missing parallelization.
+        - Suggestion: Improve readability, naming, and comments.
       Additional Checks:
-        - Validate syntax and job structure.
-        - Highlight environment separation.
+        - Verify approval gates for production deployments.
+        - Ensure secrets are masked and managed via CI variables.
+        - Recommend pipeline optimizations.
 
-  - name: Python Script Review
-    fileFilters:
-      - "*.py"
-    instructions: |
-      Analyze Python code changes.
-      Categorize findings as:
-        - Critical: Runtime-breaking syntax errors, insecure eval/exec usage, credential leaks.
-        - Warning: Unused imports, missing type hints, unoptimized code.
-        - Suggestion: Docstring improvements, PEP8 formatting suggestions.
-      Additional Checks:
-        - Check for edge cases, error handling, and unit test coverage.
-
-  - name: Dockerfile Review
+  - name: Dockerfile & Container Review
     fileFilters:
       - "Dockerfile"
     instructions: |
-      Review Dockerfile changes for security and performance.
-      Categorize findings as:
-        - Critical: Security vulnerabilities, secret exposure, invalid syntax.
-        - Warning: Inefficient layering, missing pinned image versions, caching issues.
-        - Suggestion: Use multi-stage builds, optimize image size, improve readability.
+      Review container setup for security and performance:
+        - Critical: Insecure base images, no user permissions, secrets in layers.
+        - High: Missing pinned versions, large unoptimized images, excessive RUN commands.
+        - Medium: Inefficient caching, lack of multi-stage builds.
+        - Suggestion: Improve documentation, add HEALTHCHECK instructions.
+      Additional Checks:
+        - Validate best practices (COPY vs ADD, minimal layers).
+        - Ensure reproducibility and immutability.
 
-  - name: General Best Practices
+  - name: General & Cross-Cutting Concerns
     fileFilters:
       - "*"
     instructions: |
-      For all files, review only the changes in the diff.
-      Categorize findings as:
-        - Critical: Code that introduces breaking changes or security risks.
-        - Warning: Potential maintainability or performance issues.
-        - Suggestion: Non-blocking recommendations to improve clarity or style.
+      For all files, review changes in context:
+        - Critical: Breaking changes, security vulnerabilities, missing validations.
+        - High: Logic errors, no unit tests, non-performant code paths.
+        - Medium: Maintainability issues, unclear comments, missing docs.
+        - Suggestion: Style improvements, naming conventions, code readability.
       Additional Checks:
-        - Ensure meaningful commit messages.
-
-        - Highlight missing comments or documentation.
+        - Ensure meaningful commit messages referencing issues/tickets.
+        - Verify test coverage for major changes.
+        - Highlight architectural impact if relevant.
