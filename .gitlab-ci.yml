@@ -58,11 +58,11 @@ save_good_state:
   stage: build
   script:
     - echo "Saving current state of repository..."
-    - mkdir good_state
-    - cp -r * good_state/
+    - mkdir -p ../good_state
+    - cp -r . ../good_state
   artifacts:
     paths:
-      - good_state/
+      - ../good_state/
     expire_in: 1 week
   only:
     refs: [main]
@@ -320,7 +320,7 @@ rollback_clone:
     - |
       if [ -f test_fail_employees ] || [ -f test_fail_department ]; then
         echo "Tests failed, restoring files from saved state..."
-        cp -r good_state/* .
+        cp -r ../good_state/* .
         echo "Rollback completed (files restored locally)."
       else
         echo "No rollback needed, tests passed."
