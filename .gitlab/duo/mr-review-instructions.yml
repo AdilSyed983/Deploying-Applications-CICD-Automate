@@ -37,7 +37,7 @@ instructions:
     instructions: |
       Review pipeline definitions for safety, efficiency, and scalability:
         - Critical: Invalid YAML syntax, credentials in plain text, incorrect deployment targets.
-        - High: Missing environment separation, no rollback or retry strategies.
+        - Warning: Missing environment separation, no rollback or retry strategies.
         - Medium: Inefficient caching, redundant jobs, missing parallelization.
         - Suggestion: Improve readability, naming, and comments.
       Additional Checks:
