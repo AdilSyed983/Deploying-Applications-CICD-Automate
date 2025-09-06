@@ -22,7 +22,7 @@ instructions:
     instructions: |
       Focus on maintainability, performance, and security:
         - Critical: Compilation errors, SQL injection risk, missing exception handling.
-        - High: Hardcoded credentials, poor modularization, unhandled edge cases.
+        - Warning: Hardcoded credentials, poor modularization, unhandled edge cases.
         - Medium: Inefficient loops, lack of bulk operations, ambiguous variable names.
         - Suggestion: Add documentation, improve readability.
       Additional Checks:
