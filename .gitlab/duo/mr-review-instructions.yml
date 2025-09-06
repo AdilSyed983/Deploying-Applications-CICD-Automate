@@ -51,7 +51,7 @@ instructions:
     instructions: |
       Review container setup for security and performance:
         - Critical: Insecure base images, no user permissions, secrets in layers.
-        - High: Missing pinned versions, large unoptimized images, excessive RUN commands.
+        - Warning: Missing pinned versions, large unoptimized images, excessive RUN commands.
         - Medium: Inefficient caching, lack of multi-stage builds.
         - Suggestion: Improve documentation, add HEALTHCHECK instructions.
       Additional Checks:
