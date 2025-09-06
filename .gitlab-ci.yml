@@ -56,10 +56,13 @@ build_job:
 # Save a copy of the repo files after build
 save_good_state:
   stage: build
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache rsync
   script:
     - echo "Saving current state of repository..."
     - mkdir backup_state
-    - cp -r ./* backup_state/
+    - rsync -av --progress ./ ./backup_state --exclude backup_state
   artifacts:
     paths:
       - backup_state/
@@ -314,13 +317,13 @@ rollback_clone:
   stage: cleanup
   image: alpine:latest
   before_script:
-    - apk add --no-cache bash
+     - apk add --no-cache rsync bash
   script:
     - echo "=== Starting rollback process (using artifacts) ==="
     - |
       if [ -f test_fail_employees ] || [ -f test_fail_department ]; then
         echo "Tests failed, restoring files from saved state..."
-        cp -r backup_state/* .
+        rsync -av --progress ./backup_state/ ./ --exclude backup_state
         echo "Rollback completed (files restored locally)."
       else
         echo "No rollback needed, tests passed."
@@ -329,6 +332,9 @@ rollback_clone:
     name: "rollback_result_$CI_PIPELINE_ID"
     paths:
       - .
+    exclude:
+      - backup_state/
+      - .git/
     expire_in: 1 week
   needs:
     - job: save_good_state
@@ -338,4 +344,5 @@ rollback_clone:
   when: on_failure
   only:
     refs: [main]
+
     
