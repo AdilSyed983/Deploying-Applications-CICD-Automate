@@ -64,7 +64,7 @@ instructions:
     instructions: |
       For all files, review changes in context:
         - Critical: Breaking changes, security vulnerabilities, missing validations.
-        - High: Logic errors, no unit tests, non-performant code paths.
+        - Warning: Logic errors, no unit tests, non-performant code paths.
         - Medium: Maintainability issues, unclear comments, missing docs.
         - Suggestion: Style improvements, naming conventions, code readability.
       Additional Checks:
