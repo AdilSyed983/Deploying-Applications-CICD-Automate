@@ -52,6 +52,20 @@ build_job:
     expire_in: 1 week
   only:
     refs: [main]
+#-----------------------------------------------------------------------------  
+# Save a copy of the repo files after build
+save_good_state:
+  stage: build
+  script:
+    - echo "Saving current state of repository..."
+    - mkdir good_state
+    - cp -r * good_state/
+  artifacts:
+    paths:
+      - good_state/
+    expire_in: 1 week
+  only:
+    refs: [main]
 
 # ---------------- CREATE TEMP CLONE DB (dump as artifact) ----------------
 db_clone:
@@ -220,7 +234,7 @@ test_job:
         echo "No duplicates"
       fi
 
-    # Explicitly fail if we created failure markers
+  
     - |
       if [ -f test_fail_employees ] || [ -f test_fail_department ]; then
         exit 1
@@ -300,50 +314,28 @@ rollback_clone:
   stage: cleanup
   image: alpine:latest
   before_script:
-    # Install Git
-    - apk add --no-cache git
-
-    # Configure Git identity for CI
-    - git config --global user.name "fyjaan983"
-    - git config --global user.email "fyjaan983@gmail.com"
-
-    # Validate GL_PAT availability
-    - |
-      if [ -z "$GL_PAT" ]; then
-        echo "ERROR: GL_PAT variable is missing!"
-        exit 1
-      fi
-
-    # Set correct remote URL (HTTPS + PAT)
-    - git remote set-url origin https://oauth2:${GL_PAT}@gitlab.com/gitlab-cicd-automation/cicd-automation-for-apex.git
-
+    - apk add --no-cache bash
   script:
-    - echo "=== Starting rollback process ==="
+    - echo "=== Starting rollback process (using artifacts) ==="
     - |
-      # Check for failure marker files
       if [ -f test_fail_employees ] || [ -f test_fail_department ]; then
-        echo "Tests failed, restoring to last good commit..."
-
-        # Fetch latest main and reset
-        git fetch origin main
-        git checkout main
-        git reset --hard origin/main
-
-        # Commit rollback marker to avoid confusion (skip triggering CI again)
-        git commit --allow-empty -m "CI rollback: Reverted files due to failed tests [skip ci]"
-
-        # Push rollback
-        git push origin HEAD:main
-
-        echo "Rollback completed and pushed to main."
+        echo "Tests failed, restoring files from saved state..."
+        cp -r good_state/* .
+        echo "Rollback completed (files restored locally)."
       else
         echo "No rollback needed, tests passed."
       fi
-
+  artifacts:
+    name: "rollback_result_$CI_PIPELINE_ID"
+    paths:
+      - .
+    expire_in: 1 week
   needs:
+    - job: save_good_state
+      artifacts: true
     - job: test_job
       artifacts: true
-
   when: on_failure
   only:
     refs: [main]
+    
