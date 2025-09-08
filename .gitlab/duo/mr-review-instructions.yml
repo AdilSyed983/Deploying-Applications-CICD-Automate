@@ -60,7 +60,7 @@ instructions:
 
   - name: General & Cross-Cutting Concerns
     fileFilters:
-      - "*"
+      - "*.xml"
     instructions: |
       For all files, review changes in context:
         - Critical: Breaking changes, security vulnerabilities, missing validations.
