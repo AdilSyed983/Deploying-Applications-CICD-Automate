@@ -24,3 +24,7 @@ INSERT INTO DEPARTMENT (DEPT_ID, DEPT_NAME, LOCATION) VALUES (140, 'Inventory Ma
 
 
 COMMIT;
+BEGIN
+    emp_dept_pkg.delete_department(1, 110);
+    emp_dept_pkg.list_departments;
+END;

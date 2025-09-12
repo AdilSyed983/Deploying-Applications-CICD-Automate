@@ -50,3 +50,9 @@ INSERT INTO EMPLOYEE (EMP_ID, EMP_NAME, JOB_TITLE, SALARY, DEPT_ID)
 VALUES (1013, 'Andrew', 'Operations Senior Manager', 67000, 130);
 
 COMMIT;
+
+BEGIN
+emp_dept_pkg.list_employees(100);
+emp_dept_pkg.update_employee_dept(1, 1001, 150);
+END;
+

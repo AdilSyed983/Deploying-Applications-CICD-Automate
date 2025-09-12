@@ -3,8 +3,9 @@ instructions:
     fileFilters:
       - "*.sql"
     instructions: |
-      Review database scripts with a focus on safety and performance:
+      Review database scripts with a focus on safety, performance, and sensitive data exposure:
         - Critical: Invalid syntax, destructive DDL without safeguards (DROP/TRUNCATE), unsafe DELETE/UPDATE without WHERE.
+        - Critical: Hardcoded credentials (usernames, passwords) or connection strings in scripts.
         - Warning: Missing primary/foreign keys, no rollback strategy in migration scripts.
         - Medium: Inefficient joins, no indexing for large tables, SELECT * usage.
         - Suggestion: Improve formatting, use consistent naming conventions, add comments.
@@ -20,9 +21,10 @@ instructions:
       - "*.pkb"
       - "*.plsql"
     instructions: |
-      Focus on maintainability, performance, and security:
+      Focus on maintainability, performance, security, and sensitive data handling:
         - Critical: Compilation errors, SQL injection risk, missing exception handling.
-        - Warning: Hardcoded credentials, poor modularization, unhandled edge cases.
+        - Critical: Hardcoded passwords, API keys, tokens, or sensitive variables.
+        - Warning: Poor modularization, unhandled edge cases.
         - Medium: Inefficient loops, lack of bulk operations, ambiguous variable names.
         - Suggestion: Add documentation, improve readability.
       Additional Checks:
@@ -35,22 +37,23 @@ instructions:
       - ".gitlab-ci.yml"
       - ".gitlab/ci/*.yml"
     instructions: |
-      Review pipeline definitions for safety, efficiency, and scalability:
+      Review pipeline definitions for safety, efficiency, and secrets management:
         - Critical: Invalid YAML syntax, credentials in plain text, incorrect deployment targets.
+        - Critical: Hardcoded secrets, tokens, or sensitive env variables not using CI/CD secrets store.
         - Warning: Missing environment separation, no rollback or retry strategies.
         - Medium: Inefficient caching, redundant jobs, missing parallelization.
         - Suggestion: Improve readability, naming, and comments.
       Additional Checks:
         - Verify approval gates for production deployments.
-        - Ensure secrets are masked and managed via CI variables.
+        - Ensure secrets are masked and managed via CI/CD variables.
         - Recommend pipeline optimizations.
 
   - name: Dockerfile & Container Review
     fileFilters:
       - "Dockerfile"
     instructions: |
-      Review container setup for security and performance:
-        - Critical: Insecure base images, no user permissions, secrets in layers.
+      Review container setup for security, performance, and sensitive data leaks:
+        - Critical: Insecure base images, no user permissions, secrets in layers or ENV.
         - Warning: Missing pinned versions, large unoptimized images, excessive RUN commands.
         - Medium: Inefficient caching, lack of multi-stage builds.
         - Suggestion: Improve documentation, add HEALTHCHECK instructions.
@@ -64,6 +67,7 @@ instructions:
     instructions: |
       For all files, review changes in context:
         - Critical: Breaking changes, security vulnerabilities, missing validations.
+        - Critical: Hardcoded sensitive values (passwords, tokens, keys) in XML or config files.
         - Warning: Logic errors, no unit tests, non-performant code paths.
         - Medium: Maintainability issues, unclear comments, missing docs.
         - Suggestion: Style improvements, naming conventions, code readability.
