@@ -136,84 +136,11 @@ db_clone:
     refs: [main]
 
 # ---------------- TEST JOB (recreate DB from dump, then validate) ----------------
-# test_job:
-#   stage: test
-#   image: $CI_REGISTRY_IMAGE/liquibase-psql:latest
-#   services:
-#     - name: postgres:15
-#       alias: db
-#   variables:
-#     POSTGRES_USER: postgres
-#     POSTGRES_PASSWORD: postgres
-#     POSTGRES_DB: postgres
-#     DNAME: testdb
-#   before_script: |
-#     set -e
-#     export PGPASSWORD="$POSTGRES_PASSWORD"
-#
-#     # Wait for Postgres to be ready
-#     for i in $(seq 1 30); do
-#       psql -h db -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT 1" && break || (echo "Waiting for DB ($i)"; sleep 2)
-#     done
-#     echo "Database is ready."
-#
-#     # Drop & recreate the test database
-#     psql -h db -U "$POSTGRES_USER" -d postgres -c "DROP DATABASE IF EXISTS $DNAME;"
-#     psql -h db -U "$POSTGRES_USER" -d postgres -c "CREATE DATABASE $DNAME;"
-#   script:
-#     # Apply all SQL files from the repo (sorted), fail-fast on first error
-#     - |
-#       set -e
-#       : > test_log.txt
-#       files="$(git ls-files '*.sql' | sort)"
-#       if [ -z "$files" ]; then
-#         echo "No .sql files found in repo" | tee -a test_log.txt
-#         exit 1
-#       fi
-#       echo "Applying SQL files to $DNAME:" | tee -a test_log.txt
-#       echo "$files" | tee -a test_log.txt
-#
-#       for file in $files; do
-#         echo "Applying $file" | tee -a test_log.txt
-#         if ! psql -v ON_ERROR_STOP=1 -h db -U "$POSTGRES_USER" -d "$DNAME" -f "$file" >> test_log.txt 2>&1; then
-#           echo "Execution failed in file: $file" | tee -a test_log.txt
-#           exit 1
-#         fi
-#       done
-#       echo "All SQL files applied successfully." | tee -a test_log.txt
-#
-#     # Ensure table exists before content checks
-#     - |
-#       exists=$(psql -h db -U "$POSTGRES_USER" -d "$DNAME" -tAc "SELECT to_regclass('public.employee');")
-#       if [ "$exists" != "public.employee" ]; then
-#         echo "Table 'employee' not found after applying SQL. Failing test." | tee -a test_log.txt
-#         exit 1
-#       else
-#         echo "Found table 'employee'." | tee -a test_log.txt
-#       fi
-#
-#     #  Test: no salaries < 10000
-#     - |
-#       count=$(psql -h db -U "$POSTGRES_USER" -d "$DNAME" -tAc "SELECT COUNT(*) FROM employee WHERE salary < 10000;")
-#       echo "Employees with salary < 10000: $count" | tee -a test_log.txt
-#       if [ "$count" -gt 0 ]; then
-#         echo "Test failed: Found $count employees with salary < 10000" | tee -a test_log.txt
-#         exit 1
-#       else
-#         echo "Test passed: No employees with salary < 10000" | tee -a test_log.txt
-#       fi
-#   artifacts:
-#     when: always
-#     paths:
-#       - test_log.txt
-#     expire_in: 1 week
-#   only:
-#     refs: [main]
-#################################################################
 test_job:
   stage: test
   image: alpine:latest
   script:
+    #  Unit Tests for employee and department tables
     - echo "Checking Employees.sql for salary < 10000"
     - |
       if grep -i "insert" Employees.sql | \
@@ -223,7 +150,6 @@ test_job:
       else
         echo "Fail: Employees.sql check failed"
         touch test_fail_employees
-        
       fi
 
     - echo "Checking Department.sql for duplicate DEPT_ID"
@@ -237,19 +163,34 @@ test_job:
         echo "No duplicates"
       fi
 
-  
+      # Detect missing exception handling
+      if ! grep -q "EXCEPTION" emp_dept_pkg*.sql; then
+        echo "No exception handling found"
+        touch test_fail_plsql
+      fi
+
+      # Detect hardcoded passwords
+      if grep -Ei "password|passwd|pwd" emp_dept_pkg*.sql; then
+        echo "Potential hardcoded password"
+        touch test_fail_plsql
+      fi
+
+    # Fail if any tests failed
     - |
-      if [ -f test_fail_employees ] || [ -f test_fail_department ]; then
+      if [ -f test_fail_employees ] || [ -f test_fail_department ] || [ -f test_fail_plsql ]; then
+        echo "Static analysis failed"
         exit 1
       fi
   artifacts:
     paths:
       - test_fail_employees
       - test_fail_department
-    when: always   
+      - test_fail_plsql
+    when: always
     expire_in: 48 hours
   only:
     refs: [main]
+
 # ---------------- DEPLOY TO UAT (simulated) ----------------
 deploy_uat:
   stage: deploy
