@@ -164,13 +164,13 @@ test_job:
       fi
 
       # Detect missing exception handling
-      if ! grep -q "EXCEPTION" emp_dept_pkg*.sql; then
+      if ! grep -q "EXCEPTION" EMP_DEPT_pkb*.sql; then
         echo "No exception handling found"
         touch test_fail_plsql
       fi
 
       # Detect hardcoded passwords
-      if grep -Ei "password|passwd|pwd" emp_dept_pkg*.sql; then
+      if grep -Ei "password|passwd|pwd" EMP_DEPT_pkb*.sql; then
         echo "Potential hardcoded password"
         touch test_fail_plsql
       fi
