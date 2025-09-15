@@ -77,7 +77,7 @@ CREATE OR REPLACE PACKAGE BODY emp_dept_pkg AS
         DBMS_OUTPUT.PUT_LINE('Employee created successfully.');
     END;
 
-    -- (Similarly, add checks to update_employee_dept, update_employee_salary, delete_employee)
+    
 
     PROCEDURE list_employees(p_dept_id IN EMPLOYEE.DEPT_ID%TYPE DEFAULT NULL) IS
     BEGIN
