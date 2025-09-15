@@ -53,6 +53,6 @@ COMMIT;
 
 BEGIN
 emp_dept_pkg.list_employees(100);
-emp_dept_pkg.update_employee_dept(1001,150);
+emp_dept_pkg.update_employee_dept(1, 1001, 150);
 END;
 
