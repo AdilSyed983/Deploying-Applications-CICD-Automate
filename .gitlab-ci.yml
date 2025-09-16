@@ -1,16 +1,17 @@
 image: registry.gitlab.com/fyjaan983/ci-cd-automation-through-jenkins/liquibase-psql:latest
 
 stages:
-  - docker_build_for_POSTGRES_LIQUIBASE
-  - build_for_POSTGRESDB_connection
-  - clone_the_masterDB_from_MAIN
-  - test_clonedDB
-  - deploy_to_UATPROD
-  - rollback_to_restore_artifacts
+  - DOCKER_BUILD_for_POSTGRES_LIQUIBASE
+  - BUILD_for_POSTGRESDB_connection
+  - CLONE_the_MASTERDB_from_MAIN
+  - TEST_CLONEDB
+  - DEPLOY_to_UAT
+  - DEPLOY_to_PROD
+  - ROLLBACK_to_RESTORE_ARTIFACTS
 
 # ---------------- DOCKER BUILD & PUSH ----------------
 DOCKER_BUILD:
-  stage: docker_build_for_POSTGRES_LIQUIBASE
+  stage: DOCKER_BUILD_for_POSTGRES_LIQUIBASE
   image: docker:24.0.5
   services:
     - docker:24.0.5-dind
@@ -29,7 +30,7 @@ DOCKER_BUILD:
 
 # ---------------- BUILD STAGE ----------------
 BUILD_JOB:
-  stage: build_for_POSTGRESDB_connection
+  stage: BUILD_for_POSTGRESDB_connection
   image: $CI_REGISTRY_IMAGE/liquibase-psql:latest
   services:
     - name: postgres:15
@@ -54,8 +55,8 @@ BUILD_JOB:
     refs: [main]
 #-----------------------------------------------------------------------------  
 # Save a copy of the repo files after build
-SAVE_GOOD_STATE:
-  stage: build_for_POSTGRESDB_connection
+MANUAL_BACKUP:
+  stage: BUILD_for_POSTGRESDB_connection
   image: alpine:latest
   before_script:
     - apk add --no-cache rsync
@@ -72,7 +73,7 @@ SAVE_GOOD_STATE:
 
 # ---------------- CREATE TEMP CLONE DB (dump as artifact) ----------------
 DB_CLONE:
-  stage: clone_the_masterDB_from_MAIN
+  stage: CLONE_the_MASTERDB_from_MAIN
   image: $CI_REGISTRY_IMAGE/liquibase-psql:latest
   services:
     - name: postgres:15
@@ -137,7 +138,7 @@ DB_CLONE:
 
 # ---------------- TEST JOB (recreate DB from dump, then validate) ----------------
 TEST_JOB:
-  stage: test_clonedDB
+  stage: TEST_CLONEDB
   image: alpine:latest
   script:
     #  Unit Tests for employee and department tables
@@ -193,7 +194,7 @@ TEST_JOB:
 
 # ---------------- DEPLOY TO UAT (simulated) ----------------
 DEPLOY_UAT:
-  stage: deploy_to_UATPROD
+  stage: DEPLOY_to_UAT
   image: $CI_REGISTRY_IMAGE/liquibase-psql:latest
   services:
     - name: postgres:15
@@ -224,7 +225,7 @@ DEPLOY_UAT:
     refs: [main]
 # ---------------- DEPLOY TO PROD (simulated) ----------------
 DEPLOY_PROD:
-  stage: deploy_to_UATPROD
+  stage: DEPLOY_to_PROD
   image: $CI_REGISTRY_IMAGE/liquibase-psql:latest
   services:
     - name: postgres:15
@@ -255,7 +256,7 @@ DEPLOY_PROD:
     refs: [main]
 # ---------------- CLEANUP (mostly no-op; services are ephemeral) ----------------
 ROLLBACK_CLONE:
-  stage: rollback_to_restore_artifacts
+  stage: ROLLBACK_to_RESTORE_ARTIFACTS
   image: alpine:latest
   before_script:
      - apk add --no-cache rsync bash
@@ -278,7 +279,7 @@ ROLLBACK_CLONE:
       - .git/
     expire_in: 1 week
   needs:
-    - job: SAVE_GOOD_STATE
+    - job: MANUAL_BACKUP
       artifacts: true
     - job: TEST_JOB
       artifacts: true
