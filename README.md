@@ -1,1 +1,1 @@
-# CI-CD-Automation-Through-Jenkins
+# CI-CD-Automation-Through- GitLab CICD Pipeline
