@@ -45,9 +45,13 @@ VALUES (1011, 'Levi Adams', 'Distribution', 57000, 110);
 INSERT INTO EMPLOYEE (EMP_ID, EMP_NAME, JOB_TITLE, SALARY, DEPT_ID) 
 VALUES (1012, 'Harold Lanister', 'Supply Chain Manager', 75000, 120);
 
-
 INSERT INTO EMPLOYEE (EMP_ID, EMP_NAME, JOB_TITLE, SALARY, DEPT_ID) 
 VALUES (1013, 'Andrew', 'Operations Senior Manager', 67000, 130);
+
+INSERT INTO EMPLOYEE (EMP_ID, EMP_NAME, JOB_TITLE, SALARY, DEPT_ID) 
+VALUES (1014, 'Stephan', 'Distribution Manager', 60000, 140);
+
+
 
 COMMIT;
 
