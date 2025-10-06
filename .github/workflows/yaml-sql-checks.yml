@@ -101,7 +101,7 @@ jobs:
   aggregate:
     needs: [yamllint, sqlfluff]
     runs-on: ubuntu-latest
-    if: needs.detect-changes.outputs.yml == 'true' || needs.detect-changes.outputs.sql == 'true'
+    if: always()  # Always run aggregate after yamllint and sqlfluff, regardless of their conditions
     steps:
       - name: Summary
         run: echo "YAML/SQL lint jobs finished. See job logs for details."
