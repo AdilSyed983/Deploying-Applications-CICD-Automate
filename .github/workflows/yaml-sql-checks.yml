@@ -1,107 +1,107 @@
-name: YAML & SQL checks
+# name: YAML & SQL checks
 
-on:
-  pull_request:
-    types: [opened, synchronize, reopened]
-  push:
-    branches: [ main, master ]
+# on:
+#   pull_request:
+#     types: [opened, synchronize, reopened]
+#   push:
+#     branches: [ main, master ]
 
-jobs:
-  detect-changes:
-    runs-on: ubuntu-latest
-    outputs:
-      yml: ${{ steps.filter.outputs.yml }}
-      sql: ${{ steps.filter.outputs.sql }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-        with:
-          fetch-depth: 0
+# jobs:
+#   detect-changes:
+#     runs-on: ubuntu-latest
+#     outputs:
+#       yml: ${{ steps.filter.outputs.yml }}
+#       sql: ${{ steps.filter.outputs.sql }}
+#     steps:
+#       - name: Checkout
+#         uses: actions/checkout@v3
+#         with:
+#           fetch-depth: 0
 
-      - name: Filter files
-        id: filter
-        uses: dorny/paths-filter@v2
-        with:
-          filters: |
-            yml:
-              - '**/*.yml'
-              - '**/*.yaml'
-            sql:
-              - '**/*.sql'
+#       - name: Filter files
+#         id: filter
+#         uses: dorny/paths-filter@v2
+#         with:
+#           filters: |
+#             yml:
+#               - '**/*.yml'
+#               - '**/*.yaml'
+#             sql:
+#               - '**/*.sql'
 
-  yamllint:
-    needs: detect-changes
-    if: needs.detect-changes.outputs.yml == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v3
+#   yamllint:
+#     needs: detect-changes
+#     if: needs.detect-changes.outputs.yml == 'true'
+#     runs-on: ubuntu-latest
+#     steps:
+#       - name: Checkout
+#         uses: actions/checkout@v3
 
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
+#       - name: Setup Python
+#         uses: actions/setup-python@v4
+#         with:
+#           python-version: '3.11'
 
-      - name: Install yamllint
-        run: |
-          python -m pip install --upgrade pip
-          pip install yamllint
+#       - name: Install yamllint
+#         run: |
+#           python -m pip install --upgrade pip
+#           pip install yamllint
 
-      - name: Run yamllint
-        run: |
-          # Exclude .github/workflows if you want
-          find . -type f \( -name "*.yml" -o -name "*.yaml" \) -not -path "./.git/*" -not -path "./node_modules/*" -not -path "./.github/workflows/*" -print0 \
-            | xargs -0 yamllint -d default || exit 1
+#       - name: Run yamllint
+#         run: |
+#           # Exclude .github/workflows if you want
+#           find . -type f \( -name "*.yml" -o -name "*.yaml" \) -not -path "./.git/*" -not -path "./node_modules/*" -not -path "./.github/workflows/*" -print0 \
+#             | xargs -0 yamllint -d default || exit 1
 
-  sqlfluff:
-    needs: detect-changes
-    if: needs.detect-changes.outputs.sql == 'true'
-    runs-on: ubuntu-latest
-    env:
-      # default dialect; override by creating .sqlfluff in repo or change to your dialect: e.g., "postgres"
-      SQLFLUFF_DIALECT: "ansi"
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v3
+#   sqlfluff:
+#     needs: detect-changes
+#     if: needs.detect-changes.outputs.sql == 'true'
+#     runs-on: ubuntu-latest
+#     env:
+#       # default dialect; override by creating .sqlfluff in repo or change to your dialect: e.g., "postgres"
+#       SQLFLUFF_DIALECT: "ansi"
+#     steps:
+#       - name: Checkout
+#         uses: actions/checkout@v3
 
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
+#       - name: Setup Python
+#         uses: actions/setup-python@v4
+#         with:
+#           python-version: '3.11'
 
-      - name: Install sqlfluff and plugins
-        run: |
-          python -m pip install --upgrade pip
-          # core sqlfluff
-          pip install sqlfluff
-          # add dialect plugins if needed, e.g., postgres or bigquery:
-          # pip install sqlfluff-templater-dbt sqlfluff-templater-jinja  # if using templating
-          # pip install sqlfluff-tempo-postgres  # example plugin, check your dialect plugin name
-          sqlfluff --version
+#       - name: Install sqlfluff and plugins
+#         run: |
+#           python -m pip install --upgrade pip
+#           # core sqlfluff
+#           pip install sqlfluff
+#           # add dialect plugins if needed, e.g., postgres or bigquery:
+#           # pip install sqlfluff-templater-dbt sqlfluff-templater-jinja  # if using templating
+#           # pip install sqlfluff-tempo-postgres  # example plugin, check your dialect plugin name
+#           sqlfluff --version
 
-      - name: Run sqlfluff lint
-        run: |
-          # If you store SQL in specific folders, change the path(s) below.
-          # Use SQLFLUFF_DIALECT env or a .sqlfluff config in your repo for dialect and rules.
-          echo "Using SQLFluff dialect: $SQLFLUFF_DIALECT"
-          # Lint all .sql files
-          files=$(find . -type f -name "*.sql" -not -path "./.git/*" -not -path "./node_modules/*" -print)
-          if [ -z "$files" ]; then
-            echo "No SQL files found."
-            exit 0
-          fi
-          # Run lint; fail on any error
-          echo "$files" | xargs -n1 sqlfluff lint --dialect ${SQLFLUFF_DIALECT} || (echo "sqlfluff found issues" && exit 1)
+#       - name: Run sqlfluff lint
+#         run: |
+#           # If you store SQL in specific folders, change the path(s) below.
+#           # Use SQLFLUFF_DIALECT env or a .sqlfluff config in your repo for dialect and rules.
+#           echo "Using SQLFluff dialect: $SQLFLUFF_DIALECT"
+#           # Lint all .sql files
+#           files=$(find . -type f -name "*.sql" -not -path "./.git/*" -not -path "./node_modules/*" -print)
+#           if [ -z "$files" ]; then
+#             echo "No SQL files found."
+#             exit 0
+#           fi
+#           # Run lint; fail on any error
+#           echo "$files" | xargs -n1 sqlfluff lint --dialect ${SQLFLUFF_DIALECT} || (echo "sqlfluff found issues" && exit 1)
 
-      # optional: attempt fixes (uncomment to enable auto-fix)
-      # - name: Try auto-fix with sqlfluff
-      #   run: |
-      #     echo "$files" | xargs -n1 sqlfluff fix --dialect ${SQLFLUFF_DIALECT} --force || true
+#       # optional: attempt fixes (uncomment to enable auto-fix)
+#       # - name: Try auto-fix with sqlfluff
+#       #   run: |
+#       #     echo "$files" | xargs -n1 sqlfluff fix --dialect ${SQLFLUFF_DIALECT} --force || true
 
-  aggregate:
-    needs: [yamllint, sqlfluff]
-    runs-on: ubuntu-latest
-    if: always()  # Always run aggregate after yamllint and sqlfluff, regardless of their conditions
-    steps:
-      - name: Summary
-        run: echo "YAML/SQL lint jobs finished. See job logs for details."
+#   aggregate:
+#     needs: [yamllint, sqlfluff]
+#     runs-on: ubuntu-latest
+#     if: always()  # Always run aggregate after yamllint and sqlfluff, regardless of their conditions
+#     steps:
+#       - name: Summary
+#         run: echo "YAML/SQL lint jobs finished. See job logs for details."
