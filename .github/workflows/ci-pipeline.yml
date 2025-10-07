@@ -16,7 +16,7 @@ jobs:
       options: --privileged
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
 
       - name: Docker login
         run: |
@@ -46,7 +46,7 @@ jobs:
       image: ghcr.io/${{ github.repository }}/liquibase-psql:latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
 
       - name: Wait for Postgres
         run: |
@@ -73,7 +73,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: BUILD_JOB
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v3
       - name: Backup files
         run: |
           mkdir backup_state
@@ -99,7 +99,7 @@ jobs:
     container:
       image: ghcr.io/${{ github.repository }}/liquibase-psql:latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v3
       - name: Wait for Postgres
         run: |
           for i in $(seq 1 30); do
@@ -132,7 +132,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: DB_CLONE
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v3
       - name: Run SQL static checks
         run: |
           # Employees.sql check
@@ -152,7 +152,7 @@ jobs:
     # No environment protection rules needed for UAT
     if: github.ref == 'refs/heads/main'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v3
       - name: Simulate UAT deploy
         run: echo "Deploy to UAT done"
 
@@ -164,7 +164,7 @@ jobs:
     # No environment protection rules needed for production
     if: github.ref == 'refs/heads/main'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v3
       - name: Simulate PROD deploy
         run: echo "Deploy to PROD done"
 
@@ -174,7 +174,7 @@ jobs:
     needs: [MANUAL_BACKUP, TEST_JOB]
     if: failure()
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v3
       - name: Restore repo files
         run: |
           echo "Restoring repo from backup..."
