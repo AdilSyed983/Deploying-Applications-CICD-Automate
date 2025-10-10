@@ -1,12 +1,11 @@
 name: CI/CD Pipeline (YAML + SQL + Liquibase)
 
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-  workflow_dispatch:
+# Use PAT login for GHCR actions, so ensure GHCR_PAT secret exists
+permissions:
+  contents: read
+  packages: write
 
+# Default env values (repo_lower provided so static analyzers don't warn)
 env:
   repo_lower: ${{ github.repository }}
   IMAGE_NAME: liquibase-psql
@@ -16,10 +15,59 @@ env:
   POSTGRES_DB: postgres
   DOCKER_NETWORK: ci_network
 
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
 jobs:
   DOCKER_BUILD:
     name: Docker Build & Push
     runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Set lowercase repo name
+        id: prep
+        run: echo "repo_lower=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+
+      - name: Login to GHCR (using PAT)
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      - name: Set up QEMU (optional)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push to GHCR
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/${{ env.repo_lower }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+
+      - name: Upload build log (placeholder)
+        run: echo "Docker build & push finished" > build_log.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build_log
+          path: build_log.txt
+
+  BUILD_JOB:
+    name: Build & Validate Changelog
+    runs-on: ubuntu-latest
+    needs: DOCKER_BUILD
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v3
@@ -27,48 +75,55 @@ jobs:
       - name: Set lowercase repo name
         run: echo "repo_lower=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
 
-      - name: Log in to GHCR
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v4
+      - name: Login to GHCR (PAT)
+        uses: docker/login-action@v2
         with:
-          context: .
-          push: true
-          tags: ghcr.io/${{ env.repo_lower }}/liquibase-psql:latest
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
 
-  BUILD_JOB:
-    name: Build & Validate Changelog
-    runs-on: ubuntu-latest
-    needs: DOCKER_BUILD
-    services:
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_USER: ${{ env.POSTGRES_USER }}
-          POSTGRES_PASSWORD: ${{ env.POSTGRES_PASSWORD }}
-          POSTGRES_DB: ${{ env.POSTGRES_DB }}
-        ports:
-          - 5432:5432
-    steps:
-      - uses: actions/checkout@v3
+      - name: Create docker network
+        run: |
+          docker network create $DOCKER_NETWORK || true
 
-      - name: Wait for Postgres
+      - name: Start Postgres container
+        run: |
+          docker run -d --name ci_db --network $DOCKER_NETWORK \
+            -e POSTGRES_USER=${POSTGRES_USER} -e POSTGRES_PASSWORD=${POSTGRES_PASSWORD} -e POSTGRES_DB=${POSTGRES_DB} \
+            postgres:15
+
+      - name: Wait for Postgres to be ready
         run: |
           for i in $(seq 1 30); do
-            pg_isready -h localhost -p 5432 -U $POSTGRES_USER && break || (echo "Waiting for DB ($i)"; sleep 2)
+            docker exec ci_db pg_isready -U ${POSTGRES_USER} && break || (echo "Waiting for DB ($i)"; sleep 2)
           done
 
-      - name: Run Liquibase validate in container
+      - name: Pull Liquibase image
         run: |
-          docker run --rm --network host \
+          docker pull ghcr.io/${{ env.repo_lower }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+
+      - name: Validate changelog with Liquibase (container)
+        run: |
+          docker run --rm --network $DOCKER_NETWORK \
             -v $GITHUB_WORKSPACE:/workspace \
-            -w /workspace \
-            ghcr.io/${{ env.repo_lower }}/liquibase-psql:latest \
-            liquibase --url="jdbc:postgresql://localhost:5432/${POSTGRES_DB}" \
+            ghcr.io/${{ env.repo_lower }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} \
+            liquibase --url="jdbc:postgresql://ci_db:5432/${POSTGRES_DB}" \
                       --username="${POSTGRES_USER}" \
                       --password="${POSTGRES_PASSWORD}" \
-                      --changeLogFile=changelog.xml validate
+                      --changeLogFile=/workspace/changelog.xml validate
+
+      - name: Stop and remove Postgres container (cleanup)
+        if: always()
+        run: |
+          docker rm -f ci_db || true
+          docker network rm $DOCKER_NETWORK || true
+
+      - name: Upload build log (done)
+        run: echo "Validate step finished" > build_log_validate.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build_log_validate
+          path: build_log_validate.txt
 
   MANUAL_BACKUP:
     name: Save Repo Backup
@@ -78,8 +133,8 @@ jobs:
       - uses: actions/checkout@v3
       - name: Backup files
         run: |
-          mkdir backup_state
-          rsync -av --progress ./ ./backup_state --exclude backup_state
+          mkdir -p backup_state
+          rsync -av --progress ./ ./backup_state --exclude backup_state --exclude .git
       - uses: actions/upload-artifact@v4
         with:
           name: backup_state
@@ -89,46 +144,82 @@ jobs:
     name: Clone Master DB
     runs-on: ubuntu-latest
     needs: MANUAL_BACKUP
-    services:
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_USER: ${{ env.POSTGRES_USER }}
-          POSTGRES_PASSWORD: ${{ env.POSTGRES_PASSWORD }}
-          POSTGRES_DB: ${{ env.POSTGRES_DB }}
-        ports:
-          - 5432:5432
     steps:
       - uses: actions/checkout@v3
-      - name: Wait for Postgres
+
+      - name: Set lowercase repo name
+        run: echo "repo_lower=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+
+      - name: Login to GHCR (PAT)
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      - name: Create docker network
+        run: docker network create $DOCKER_NETWORK || true
+
+      - name: Start Postgres container
+        run: |
+          docker run -d --name ci_db --network $DOCKER_NETWORK \
+            -e POSTGRES_USER=${POSTGRES_USER} -e POSTGRES_PASSWORD=${POSTGRES_PASSWORD} -e POSTGRES_DB=${POSTGRES_DB} \
+            postgres:15
+
+      - name: Wait for Postgres to be ready
         run: |
           for i in $(seq 1 30); do
-            pg_isready -h localhost -p 5432 -U $POSTGRES_USER && break || (echo "Waiting DB ($i)"; sleep 2)
+            docker exec ci_db pg_isready -U ${POSTGRES_USER} && break || (echo "Waiting DB ($i)"; sleep 2)
           done
-      - name: Create temp DB & apply schema
+
+      - name: Pull Liquibase image
+        run: docker pull ghcr.io/${{ env.repo_lower }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+
+      - name: Create temp DB & apply schema (using Liquibase or SQLs)
         run: |
           DBNAME="clone_${GITHUB_SHA::8}"
-          psql -h localhost -U $POSTGRES_USER -d postgres -c "DROP DATABASE IF EXISTS \"$DBNAME\";"
-          psql -h localhost -U $POSTGRES_USER -d postgres -c "CREATE DATABASE \"$DBNAME\";"
+          echo "Creating temp DB: $DBNAME"
+          docker exec ci_db psql -U ${POSTGRES_USER} -d postgres -c "DROP DATABASE IF EXISTS \"$DBNAME\";"
+          docker exec ci_db psql -U ${POSTGRES_USER} -d postgres -c "CREATE DATABASE \"$DBNAME\";"
+
           if [ -f changelog.xml ]; then
-            docker run --rm --network host \
-              -v $GITHUB_WORKSPACE:/workspace \
-              -w /workspace \
-              ghcr.io/${{ env.repo_lower }}/liquibase-psql:latest \
-              liquibase --url="jdbc:postgresql://localhost:5432/$DBNAME" \
-                        --username="${POSTGRES_USER}" \
-                        --password="${POSTGRES_PASSWORD}" \
-                        --changeLogFile=changelog.xml update
+            echo "Applying changelog.xml via Liquibase"
+            docker run --rm --network $DOCKER_NETWORK -v $GITHUB_WORKSPACE:/workspace \
+              ghcr.io/${{ env.repo_lower }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} \
+              liquibase --url="jdbc:postgresql://ci_db:5432/$DBNAME" \
+                        --username=${POSTGRES_USER} \
+                        --password=${POSTGRES_PASSWORD} \
+                        --changeLogFile=/workspace/changelog.xml update
           else
-            for f in $(find sql -type f -name "*.sql" | sort); do
-              psql -v ON_ERROR_STOP=1 -h localhost -U $POSTGRES_USER -d "$DBNAME" -f "$f"
+            echo "Applying .sql files found in repo"
+            for f in $(find sql -type f -name '*.sql' | sort); do
+              echo "Applying $f"
+              docker run --rm --network $DOCKER_NETWORK -v $GITHUB_WORKSPACE:/workspace \
+                ghcr.io/${{ env.repo_lower }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} \
+                psql -v ON_ERROR_STOP=1 -h ci_db -U ${POSTGRES_USER} -d "$DBNAME" -f /workspace/"$f"
             done
           fi
-          pg_dump -h localhost -U $POSTGRES_USER -d "$DBNAME" -Fc -f clone.dump
-      - uses: actions/upload-artifact@v4
+
+          echo "Dumping $DBNAME to clone.dump"
+          docker run --rm --network $DOCKER_NETWORK -v $GITHUB_WORKSPACE:/workspace \
+            ghcr.io/${{ env.repo_lower }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} \
+            pg_dump -h ci_db -U ${POSTGRES_USER} -d "$DBNAME" -Fc -f /workspace/clone.dump
+
+          echo "DBNAME=$DBNAME" > clone.env
+
+      - name: Upload clone dump and env
+        uses: actions/upload-artifact@v4
         with:
           name: clone_db
-          path: clone.dump
+          path: |
+            clone.dump
+            clone.env
+
+      - name: Stop and remove Postgres container (cleanup)
+        if: always()
+        run: |
+          docker rm -f ci_db || true
+          docker network rm $DOCKER_NETWORK || true
 
   TEST_JOB:
     name: Static Analysis & SQL Tests
@@ -138,11 +229,24 @@ jobs:
       - uses: actions/checkout@v3
       - name: Run SQL static checks
         run: |
-          if grep -i "insert" Employees.sql | awk -F'[(), ]+' '{for(i=1;i<=NF;i++) if(tolower($i)=="values"){print $(i+4)}}' | awk '{if($1<10000){echo "Fail"; exit 1}}'; then
-            echo "Employees check passed"
+          set -e
+          if [ -f Employees.sql ]; then
+            if grep -i "insert" Employees.sql | awk -F'[(), ]+' '{for(i=1;i<=NF;i++) if(tolower($i)=="values"){print $(i+4)}}' | awk '{if($1<10000){print "Found salary < 10000: "$1; exit 1}}'; then
+              echo "Employees check passed"
+            fi
+          else
+            echo "No Employees.sql found - skipping that check"
           fi
-          if grep -i "insert" Department.sql | awk -F'[(), ]+' '{for(i=1;i<=NF;i++) if(tolower($i)=="values"){print $(i+1)}}' | sort | uniq -d | grep .; then
-            echo "Duplicate DEPT_ID found"; exit 1
+
+          if [ -f Department.sql ]; then
+            if grep -i "insert" Department.sql | awk -F'[(), ]+' '{for(i=1;i<=NF;i++) if(tolower($i)=="values"){print $(i+1)}}' | sort | uniq -d | grep .; then
+              echo "Duplicate DEPT_ID found"
+              exit 1
+            else
+              echo "Department check passed"
+            fi
+          else
+            echo "No Department.sql found - skipping that check"
           fi
 
   DEPLOY_UAT:
